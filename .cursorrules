@@ -85,6 +85,29 @@ Apply rules from:
 
 ---
 
+## Code Quality Rules
+
+### No Magic Numbers
+
+**NEVER use magic numbers in code.** Always define constants with descriptive names.
+
+**Examples:**
+- ❌ Bad: `config.get("THRESHOLD", 20)`
+- ✅ Good: `config.get("THRESHOLD", DEFAULT_FILE_THRESHOLD)`
+
+**Where to define constants:**
+- Module-level constants at the top of the file (after imports, before classes/functions)
+- Group related constants together with section comments
+- Use UPPER_SNAKE_CASE for constant names
+- Include comments explaining the constant's purpose and units (if applicable)
+
+**Exception:** Only use literal numbers for:
+- Mathematical operations (e.g., `time.time() * 1000` for milliseconds conversion)
+- Index operations (e.g., `array[0]`, `string[:8]`)
+- Obvious mathematical constants (e.g., `2` for doubling, `100` for percentage)
+
+---
+
 ## When in Doubt
 
 **ASK THE USER!**
