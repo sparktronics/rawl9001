@@ -67,13 +67,13 @@ echo -n "your-api-key" | gcloud secrets create pr-review-api-key --data-file=-
 # or update
 echo -n "your-new-api-key" | gcloud secrets versions add pr-review-api-key --data-file=-
 
-# Grant Cloud Functions access to secrets
+# Grant Cloud Functions access to secrets (pending)
 gcloud secrets add-iam-policy-binding azure-devops-pat \
-  --member="serviceAccount:889854265330-compute@developer.gserviceaccount.com" \
+  --member="serviceAccount:853391738715-compute@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
 gcloud secrets add-iam-policy-binding pr-review-api-key \
-  --member="serviceAccount:889854265330-compute@developer.gserviceaccount.com" \
+  --member="serviceAccount:853391738715-compute@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
 

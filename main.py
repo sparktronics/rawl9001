@@ -945,6 +945,64 @@ class ReviewResult:
     action_taken: str | None  # "rejected", "commented", or None
 
 
+@dataclass
+class FilterResult:
+    """Result of filtering and limiting files for review."""
+    filtered_files: list
+    original_file_count: int
+    markdown_files_filtered: int
+    is_extensive: bool
+    files_limited: int
+
+
+def filter_and_limit_files(file_diffs: list, config: dict) -> FilterResult:
+    """Filter markdown files and limit files for extensive PRs.
+    
+    Applies two filtering operations:
+    1. Filters out markdown files if FILTER_MARKDOWN_FILES is enabled
+    2. Limits files to EXTENSIVE_PR_FILE_THRESHOLD if PR is extensive
+    
+    Args:
+        file_diffs: List of file diff dicts with 'path' key
+        config: Configuration dictionary with filtering settings
+        
+    Returns:
+        FilterResult with filtered files and metadata about filtering operations
+    """
+    original_file_count = len(file_diffs)
+    markdown_files_filtered = 0
+    
+    # Filter markdown files if enabled
+    if config.get("FILTER_MARKDOWN_FILES", True):
+        logger.info(f"[FILTER] Filtering markdown files from review")
+        file_diffs, markdown_files_filtered = filter_markdown_files(file_diffs)
+        logger.info(f"[FILTER] After filtering: {len(file_diffs)} files remaining (removed {markdown_files_filtered} markdown files)")
+        
+        if len(file_diffs) == 0:
+            logger.warning(f"[FILTER] All files were markdown files - review will proceed with empty file list")
+    else:
+        logger.debug(f"[FILTER] Markdown filtering disabled via configuration")
+    
+    # Check if PR is extensive and limit files if needed
+    is_extensive = is_extensive_pr(file_diffs, config)
+    files_limited = 0
+    
+    if is_extensive:
+        file_threshold = config.get("EXTENSIVE_PR_FILE_THRESHOLD", DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)
+        if len(file_diffs) > file_threshold:
+            files_limited = len(file_diffs) - file_threshold
+            file_diffs = file_diffs[:file_threshold]
+            logger.info(f"[LIMIT] Extensive PR detected - limiting review to first {file_threshold} files (excluded {files_limited} files)")
+    
+    return FilterResult(
+        filtered_files=file_diffs,
+        original_file_count=original_file_count,
+        markdown_files_filtered=markdown_files_filtered,
+        is_extensive=is_extensive,
+        files_limited=files_limited
+    )
+
+
 def process_pr_review(
     config: dict,
     ado: "AzureDevOpsClient",
@@ -978,31 +1036,11 @@ def process_pr_review(
     logger.info(f"[REVIEW] Starting review for PR #{pr_id}: '{pr_title}' by {pr_author}")
     logger.info(f"[REVIEW] Files to review: {len(file_diffs)}")
     
-    # Always filter markdown files if enabled
-    original_file_count = len(file_diffs)
-    markdown_files_filtered = 0
-    
-    if config.get("FILTER_MARKDOWN_FILES", True):
-        logger.info(f"[FILTER] Filtering markdown files from review")
-        file_diffs, markdown_files_filtered = filter_markdown_files(file_diffs)
-        logger.info(f"[FILTER] After filtering: {len(file_diffs)} files remaining (removed {markdown_files_filtered} markdown files)")
-        
-        if len(file_diffs) == 0:
-            logger.warning(f"[FILTER] All files were markdown files - review will proceed with empty file list")
-    else:
-        logger.debug(f"[FILTER] Markdown filtering disabled via configuration")
-    
-    # Check if PR is extensive and limit files if needed
-    is_extensive = is_extensive_pr(file_diffs, config)
-    files_limited = 0
-    original_file_count_after_filtering = len(file_diffs)
-    
-    if is_extensive:
-        file_threshold = config.get("EXTENSIVE_PR_FILE_THRESHOLD", DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)
-        if len(file_diffs) > file_threshold:
-            files_limited = len(file_diffs) - file_threshold
-            file_diffs = file_diffs[:file_threshold]
-            logger.info(f"[LIMIT] Extensive PR detected - limiting review to first {file_threshold} files (excluded {files_limited} files)")
+    # Filter and limit files based on configuration
+    filter_result = filter_and_limit_files(file_diffs, config)
+    file_diffs = filter_result.filtered_files
+    is_extensive = filter_result.is_extensive
+    files_limited = filter_result.files_limited
     
     # Build prompt and call Gemini
     logger.info("[REVIEW] Building prompt and calling Gemini")
