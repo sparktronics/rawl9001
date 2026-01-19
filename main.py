@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 # Configuration Constants
 # =============================================================================
 
-DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD = 20  # Default file count threshold for extensive PR detection
+DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD = 60  # Default file count threshold for extensive PR detection
 DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD = 500000  # Default character count threshold for extensive PR detection (500KB)
 
 
@@ -119,7 +119,7 @@ def load_config() -> tuple[dict, list]:
     # Extensive PR filtering configuration
     config["EXTENSIVE_PR_FILE_THRESHOLD"] = int(os.environ.get("EXTENSIVE_PR_FILE_THRESHOLD", str(DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)))
     config["EXTENSIVE_PR_SIZE_THRESHOLD"] = int(os.environ.get("EXTENSIVE_PR_SIZE_THRESHOLD", str(DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD)))
-    config["FILTER_MARKDOWN_FILES"] = os.environ.get("FILTER_MARKDOWN_FILES", "true").lower() == "true"
+    config["FILTER_NON_CODE_FILES"] = os.environ.get("FILTER_NON_CODE_FILES", "true").lower() == "true"
     
     return config, missing
 
@@ -632,10 +632,19 @@ def get_max_severity(review: str) -> str:
 # File Filtering for Extensive PRs
 # =============================================================================
 
-def filter_markdown_files(file_diffs: list) -> tuple[list, int]:
-    """Filter out .md files from file_diffs list.
+# File extensions to filter out from review (non-code files)
+FILTERED_FILE_EXTENSIONS = {
+    ".md",  # Markdown files
+    ".sh",  # Shell scripts
+    # Image file extensions
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".bmp", ".webp", ".ico", ".tiff", ".tif"
+}
+
+
+def filter_non_code_files(file_diffs: list) -> tuple[list, int]:
+    """Filter out non-code files (.md, .sh, and image files) from file_diffs list.
     
-    Filters files based on path ending with .md (case-insensitive).
+    Filters files based on path ending with any of the filtered extensions (case-insensitive).
     Logs which files were filtered.
     
     Args:
@@ -650,16 +659,20 @@ def filter_markdown_files(file_diffs: list) -> tuple[list, int]:
     
     for diff in file_diffs:
         path = diff.get("path", "")
-        # Check if path ends with .md (case-insensitive)
-        if path.lower().endswith(".md"):
+        path_lower = path.lower()
+        
+        # Check if path ends with any filtered extension
+        should_filter = any(path_lower.endswith(ext) for ext in FILTERED_FILE_EXTENSIONS)
+        
+        if should_filter:
             filtered_count += 1
             filtered_paths.append(path)
-            logger.debug(f"[FILTER] Excluding markdown file: {path}")
+            logger.debug(f"[FILTER] Excluding non-code file: {path}")
         else:
             filtered.append(diff)
     
     if filtered_count > 0:
-        logger.info(f"[FILTER] Filtered out {filtered_count} markdown file(s): {', '.join(filtered_paths)}")
+        logger.info(f"[FILTER] Filtered out {filtered_count} non-code file(s): {', '.join(filtered_paths)}")
     
     return filtered, filtered_count
 
@@ -950,16 +963,16 @@ class FilterResult:
     """Result of filtering and limiting files for review."""
     filtered_files: list
     original_file_count: int
-    markdown_files_filtered: int
+    non_code_files_filtered: int
     is_extensive: bool
     files_limited: int
 
 
 def filter_and_limit_files(file_diffs: list, config: dict) -> FilterResult:
-    """Filter markdown files and limit files for extensive PRs.
+    """Filter non-code files (.md, .sh, images) and limit files for extensive PRs.
     
     Applies two filtering operations:
-    1. Filters out markdown files if FILTER_MARKDOWN_FILES is enabled
+    1. Filters out non-code files (.md, .sh, and image files) if FILTER_NON_CODE_FILES is enabled
     2. Limits files to EXTENSIVE_PR_FILE_THRESHOLD if PR is extensive
     
     Args:
@@ -970,18 +983,18 @@ def filter_and_limit_files(file_diffs: list, config: dict) -> FilterResult:
         FilterResult with filtered files and metadata about filtering operations
     """
     original_file_count = len(file_diffs)
-    markdown_files_filtered = 0
+    non_code_files_filtered = 0
     
-    # Filter markdown files if enabled
-    if config.get("FILTER_MARKDOWN_FILES", True):
-        logger.info(f"[FILTER] Filtering markdown files from review")
-        file_diffs, markdown_files_filtered = filter_markdown_files(file_diffs)
-        logger.info(f"[FILTER] After filtering: {len(file_diffs)} files remaining (removed {markdown_files_filtered} markdown files)")
+    # Filter non-code files if enabled
+    if config.get("FILTER_NON_CODE_FILES", True):
+        logger.info(f"[FILTER] Filtering non-code files (.md, .sh, images) from review")
+        file_diffs, non_code_files_filtered = filter_non_code_files(file_diffs)
+        logger.info(f"[FILTER] After filtering: {len(file_diffs)} files remaining (removed {non_code_files_filtered} non-code files)")
         
         if len(file_diffs) == 0:
-            logger.warning(f"[FILTER] All files were markdown files - review will proceed with empty file list")
+            logger.warning(f"[FILTER] All files were non-code files - review will proceed with empty file list")
     else:
-        logger.debug(f"[FILTER] Markdown filtering disabled via configuration")
+        logger.debug(f"[FILTER] Non-code file filtering disabled via configuration")
     
     # Check if PR is extensive and limit files if needed
     is_extensive = is_extensive_pr(file_diffs, config)
@@ -997,7 +1010,7 @@ def filter_and_limit_files(file_diffs: list, config: dict) -> FilterResult:
     return FilterResult(
         filtered_files=file_diffs,
         original_file_count=original_file_count,
-        markdown_files_filtered=markdown_files_filtered,
+        non_code_files_filtered=non_code_files_filtered,
         is_extensive=is_extensive,
         files_limited=files_limited
     )

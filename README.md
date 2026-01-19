@@ -294,6 +294,37 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 | `GEMINI_MODEL` | No | Gemini model to use (default: `gemini-2.5-pro`) |
 | `DLQ_SUBSCRIPTION` | No | Dead Letter Queue subscription name (default: `pr-review-dlq-sub`) |
 | `SYSTEM_PROMPT_BLOB_PATH` | No | GCS path to system prompt file (default: `prompts/system-prompt.txt`) |
+| `FILTER_NON_CODE_FILES` | No | Filter out non-code files (.md, .sh, images) from review (default: `true`) |
+| `EXTENSIVE_PR_FILE_THRESHOLD` | No | File count threshold for extensive PR detection (default: `20`) |
+| `EXTENSIVE_PR_SIZE_THRESHOLD` | No | Character count threshold for extensive PR detection (default: `500000`) |
+
+## File Filtering
+
+The system automatically filters out non-code files from PR reviews to focus on code changes that may cause regressions.
+
+### Filtered File Types
+
+The following file types are excluded from review by default:
+
+- **Markdown files**: `.md`
+- **Shell scripts**: `.sh`
+- **Image files**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.svg`, `.bmp`, `.webp`, `.ico`, `.tiff`, `.tif`
+
+### Configuration
+
+File filtering can be controlled via the `FILTER_NON_CODE_FILES` environment variable:
+
+- `FILTER_NON_CODE_FILES=true` (default): Non-code files are filtered out
+- `FILTER_NON_CODE_FILES=false`: All files are included in the review
+
+### Extensive PR Handling
+
+For large PRs, the system automatically limits the number of files reviewed to prevent token limit issues:
+
+- **File count threshold**: When a PR exceeds `EXTENSIVE_PR_FILE_THRESHOLD` files (default: 20), only the first N files are reviewed
+- **Size threshold**: When total file content exceeds `EXTENSIVE_PR_SIZE_THRESHOLD` characters (default: 500,000), the PR is treated as extensive
+
+When files are limited, a notice is added to the PR comment indicating that a partial review was performed.
 
 ## System Prompt Configuration
 
