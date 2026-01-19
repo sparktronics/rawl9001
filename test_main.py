@@ -18,10 +18,14 @@ from main import (
     update_marker_for_retry,
     update_marker_failed,
     MAX_RETRY_ATTEMPTS,
+    DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD,
+    DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD,
     load_webhook_config,
     receive_webhook,
     process_pr_review,
     ReviewResult,
+    filter_markdown_files,
+    is_extensive_pr,
 )
 
 
@@ -1211,4 +1215,308 @@ class TestReceiveWebhook:
         
         assert status == 202
         assert response["pr_id"] == 12345  # Converted to int
+
+
+# =============================================================================
+# Markdown File Filtering Tests
+# =============================================================================
+
+class TestFilterMarkdownFiles:
+    """Tests for filter_markdown_files() function."""
+
+    def test_filter_markdown_files_removes_md_files(self):
+        """filter_markdown_files removes .md files from the list."""
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/src/styles.css", "change_type": "edit", "source_content": "css", "target_content": "old"},
+            {"path": "/docs/CHANGELOG.MD", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+        ]
+        
+        filtered, count = filter_markdown_files(file_diffs)
+        
+        assert count == 2
+        assert len(filtered) == 2
+        assert all(diff["path"].lower().endswith(".md") == False for diff in filtered)
+        assert filtered[0]["path"] == "/src/component.js"
+        assert filtered[1]["path"] == "/src/styles.css"
+
+    def test_filter_markdown_files_case_insensitive(self):
+        """filter_markdown_files handles case-insensitive extensions."""
+        file_diffs = [
+            {"path": "/docs/readme.md", "change_type": "add", "source_content": "content", "target_content": None},
+            {"path": "/docs/README.MD", "change_type": "add", "source_content": "content", "target_content": None},
+            {"path": "/docs/Readme.Md", "change_type": "add", "source_content": "content", "target_content": None},
+            {"path": "/src/file.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+        ]
+        
+        filtered, count = filter_markdown_files(file_diffs)
+        
+        assert count == 3
+        assert len(filtered) == 1
+        assert filtered[0]["path"] == "/src/file.js"
+
+    def test_filter_markdown_files_no_md_files(self):
+        """filter_markdown_files returns all files when no .md files present."""
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/src/styles.css", "change_type": "add", "source_content": "css", "target_content": None},
+        ]
+        
+        filtered, count = filter_markdown_files(file_diffs)
+        
+        assert count == 0
+        assert len(filtered) == 2
+        assert filtered == file_diffs
+
+    def test_filter_markdown_files_only_md_files(self):
+        """filter_markdown_files returns empty list when all files are .md."""
+        file_diffs = [
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+        ]
+        
+        filtered, count = filter_markdown_files(file_diffs)
+        
+        assert count == 2
+        assert len(filtered) == 0
+
+    def test_filter_markdown_files_path_with_md_but_not_extension(self):
+        """filter_markdown_files does not filter files with 'md' in path but not as extension."""
+        file_diffs = [
+            {"path": "/src/md5hash.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/src/markdown-parser.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+        ]
+        
+        filtered, count = filter_markdown_files(file_diffs)
+        
+        assert count == 1
+        assert len(filtered) == 2
+        assert any(diff["path"] == "/src/md5hash.js" for diff in filtered)
+        assert any(diff["path"] == "/src/markdown-parser.js" for diff in filtered)
+
+
+# =============================================================================
+# Extensive PR Detection Tests
+# =============================================================================
+
+class TestIsExtensivePr:
+    """Tests for is_extensive_pr() function."""
+
+    def test_is_extensive_pr_by_file_count(self):
+        """is_extensive_pr returns True when file count exceeds threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
+        file_diffs = [
+            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            for i in range(6)  # 6 files > threshold of 5
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == True
+
+    def test_is_extensive_pr_by_file_count_exact_threshold(self):
+        """is_extensive_pr returns True when file count equals threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
+        file_diffs = [
+            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            for i in range(5)  # 5 files == threshold of 5
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == True
+
+    def test_is_extensive_pr_by_file_count_below_threshold(self):
+        """is_extensive_pr returns False when file count is below threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
+        file_diffs = [
+            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            for i in range(4)  # 4 files < threshold of 5
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == False
+
+    def test_is_extensive_pr_by_size(self):
+        """is_extensive_pr returns True when total size exceeds threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
+        # Create files with content that exceeds size threshold
+        large_content = "x" * 600  # 600 chars per file
+        file_diffs = [
+            {
+                "path": f"/src/file{i}.js",
+                "change_type": "edit",
+                "source_content": large_content,
+                "target_content": large_content
+            }
+            for i in range(2)  # 2 files * 600 * 2 = 2400 chars > 1000 threshold
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == True
+
+    def test_is_extensive_pr_by_size_exact_threshold(self):
+        """is_extensive_pr returns True when total size equals threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
+        # Create files with content that equals size threshold
+        content = "x" * 250  # 250 chars per file, 2 files * 250 * 2 = 1000 chars
+        file_diffs = [
+            {
+                "path": f"/src/file{i}.js",
+                "change_type": "edit",
+                "source_content": content,
+                "target_content": content
+            }
+            for i in range(2)
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == True
+
+    def test_is_extensive_pr_by_size_below_threshold(self):
+        """is_extensive_pr returns False when total size is below threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
+        # Create files with small content
+        file_diffs = [
+            {
+                "path": f"/src/file{i}.js",
+                "change_type": "edit",
+                "source_content": "code",
+                "target_content": "old"
+            }
+            for i in range(2)  # 2 files * (4 + 3) = 14 chars < 1000 threshold
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == False
+
+    def test_is_extensive_pr_handles_none_content(self):
+        """is_extensive_pr handles None content gracefully."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
+        file_diffs = [
+            {"path": "/src/file.js", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/src/file2.js", "change_type": "edit", "source_content": "code", "target_content": None},
+        ]
+        
+        # Should not raise error and should return False (small size)
+        assert is_extensive_pr(file_diffs, config) == False
+
+    def test_is_extensive_pr_default_thresholds(self):
+        """is_extensive_pr uses default thresholds when not in config."""
+        config = {}  # Empty config should use defaults
+        # Default file threshold is DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD, so threshold+5 files should trigger
+        file_diffs = [
+            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            for i in range(DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD + 5)
+        ]
+        
+        assert is_extensive_pr(file_diffs, config) == True
+
+
+# =============================================================================
+# Integration Tests for Process PR Review with Filtering
+# =============================================================================
+
+class TestProcessPrReviewWithFiltering:
+    """Integration tests for process_pr_review() with markdown filtering."""
+
+    def test_process_review_filters_markdown_always(self, ado_client, sample_pr, mocker):
+        """process_pr_review filters markdown files for all PRs when enabled."""
+        config = {
+            "GCS_BUCKET": "test-bucket",
+            "EXTENSIVE_PR_FILE_THRESHOLD": 2,
+            "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
+            "FILTER_MARKDOWN_FILES": True,
+        }
+        
+        # PR with markdown files (filtering should happen regardless of PR size)
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+        ]
+        
+        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        
+        result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
+        
+        # Should have filtered out 2 markdown files, leaving 1 file
+        assert result.files_changed == 1
+        # Verify Gemini was called (prompt built with filtered files)
+        assert result.review_text == "# Review\n\n**Priority:** note"
+
+    def test_process_review_filters_markdown_for_small_pr(self, ado_client, sample_pr, mocker):
+        """process_pr_review filters markdown files even for small PRs."""
+        config = {
+            "GCS_BUCKET": "test-bucket",
+            "EXTENSIVE_PR_FILE_THRESHOLD": DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD,
+            "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
+            "FILTER_MARKDOWN_FILES": True,
+        }
+        
+        # Small PR with markdown files (should still filter)
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+        ]
+        
+        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        
+        result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
+        
+        # Should filter markdown file, leaving 1 file
+        assert result.files_changed == 1
+
+    def test_process_review_filtering_disabled(self, ado_client, sample_pr, mocker):
+        """process_pr_review does not filter markdown when FILTER_MARKDOWN_FILES is False, but still limits extensive PRs."""
+        config = {
+            "GCS_BUCKET": "test-bucket",
+            "EXTENSIVE_PR_FILE_THRESHOLD": 5,  # Higher threshold so PR is not extensive
+            "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
+            "FILTER_MARKDOWN_FILES": False,  # Disabled
+        }
+        
+        # PR with markdown files but not extensive (below threshold)
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+        ]
+        
+        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        
+        result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
+        
+        # Should include all files (filtering disabled, and PR not extensive)
+        assert result.files_changed == 3
+
+    def test_process_review_limits_files_for_extensive_pr(self, ado_client, sample_pr, mocker):
+        """process_pr_review limits files to threshold when PR is extensive."""
+        config = {
+            "GCS_BUCKET": "test-bucket",
+            "EXTENSIVE_PR_FILE_THRESHOLD": 3,
+            "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
+            "FILTER_MARKDOWN_FILES": True,
+        }
+        
+        # Create extensive PR with 5 files (should be limited to 3)
+        file_diffs = [
+            {"path": "/src/file1.js", "change_type": "edit", "source_content": "code1", "target_content": "old1"},
+            {"path": "/src/file2.js", "change_type": "edit", "source_content": "code2", "target_content": "old2"},
+            {"path": "/src/file3.js", "change_type": "edit", "source_content": "code3", "target_content": "old3"},
+            {"path": "/src/file4.js", "change_type": "edit", "source_content": "code4", "target_content": "old4"},
+            {"path": "/src/file5.js", "change_type": "edit", "source_content": "code5", "target_content": "old5"},
+        ]
+        
+        mock_gemini = mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** review-recommended")
+        mock_save = mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mock_comment = mocker.patch.object(ado_client, "post_pr_comment")
+        
+        result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
+        
+        # Should be limited to 3 files
+        assert result.files_changed == 3
+        
+        # Verify comment was posted with partial review notice
+        assert mock_comment.called
+        comment_text = mock_comment.call_args[0][1]
+        assert "Partial Review" in comment_text
+        assert "excluded 2 additional files" in comment_text
 

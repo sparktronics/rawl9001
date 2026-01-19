@@ -75,6 +75,14 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Configuration Constants
+# =============================================================================
+
+DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD = 20  # Default file count threshold for extensive PR detection
+DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD = 500000  # Default character count threshold for extensive PR detection (500KB)
+
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
@@ -107,6 +115,11 @@ def load_config() -> tuple[dict, list]:
     config["VERTEX_LOCATION"] = os.environ.get("VERTEX_LOCATION", "us-central1")
     config["DLQ_SUBSCRIPTION"] = os.environ.get("DLQ_SUBSCRIPTION", "pr-review-dlq-sub")
     config["GEMINI_MODEL"] = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+    
+    # Extensive PR filtering configuration
+    config["EXTENSIVE_PR_FILE_THRESHOLD"] = int(os.environ.get("EXTENSIVE_PR_FILE_THRESHOLD", str(DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)))
+    config["EXTENSIVE_PR_SIZE_THRESHOLD"] = int(os.environ.get("EXTENSIVE_PR_SIZE_THRESHOLD", str(DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD)))
+    config["FILTER_MARKDOWN_FILES"] = os.environ.get("FILTER_MARKDOWN_FILES", "true").lower() == "true"
     
     return config, missing
 
@@ -616,6 +629,81 @@ def get_max_severity(review: str) -> str:
 
 
 # =============================================================================
+# File Filtering for Extensive PRs
+# =============================================================================
+
+def filter_markdown_files(file_diffs: list) -> tuple[list, int]:
+    """Filter out .md files from file_diffs list.
+    
+    Filters files based on path ending with .md (case-insensitive).
+    Logs which files were filtered.
+    
+    Args:
+        file_diffs: List of file diff dicts with 'path' key
+        
+    Returns:
+        tuple: (filtered_file_diffs, count_of_filtered_files)
+    """
+    filtered = []
+    filtered_count = 0
+    filtered_paths = []
+    
+    for diff in file_diffs:
+        path = diff.get("path", "")
+        # Check if path ends with .md (case-insensitive)
+        if path.lower().endswith(".md"):
+            filtered_count += 1
+            filtered_paths.append(path)
+            logger.debug(f"[FILTER] Excluding markdown file: {path}")
+        else:
+            filtered.append(diff)
+    
+    if filtered_count > 0:
+        logger.info(f"[FILTER] Filtered out {filtered_count} markdown file(s): {', '.join(filtered_paths)}")
+    
+    return filtered, filtered_count
+
+
+def is_extensive_pr(file_diffs: list, config: dict) -> bool:
+    """Determine if a PR is extensive based on file count or total size.
+    
+    A PR is considered extensive if:
+    - File count exceeds EXTENSIVE_PR_FILE_THRESHOLD, OR
+    - Total content size (sum of all file content lengths) exceeds EXTENSIVE_PR_SIZE_THRESHOLD
+    
+    Args:
+        file_diffs: List of file diff dicts with 'source_content' and 'target_content' keys
+        config: Configuration dictionary with threshold values
+        
+    Returns:
+        True if PR is considered extensive
+    """
+    file_count = len(file_diffs)
+    file_threshold = config.get("EXTENSIVE_PR_FILE_THRESHOLD", DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)
+    
+    # Check file count threshold
+    if file_count >= file_threshold:
+        logger.info(f"[EXTENSIVE] PR detected as extensive: {file_count} files (threshold: {file_threshold})")
+        return True
+    
+    # Calculate total content size
+    total_size = 0
+    for diff in file_diffs:
+        source_content = diff.get("source_content") or ""
+        target_content = diff.get("target_content") or ""
+        total_size += len(source_content) + len(target_content)
+    
+    size_threshold = config.get("EXTENSIVE_PR_SIZE_THRESHOLD", DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD)
+    
+    # Check size threshold
+    if total_size >= size_threshold:
+        logger.info(f"[EXTENSIVE] PR detected as extensive: {total_size} chars (threshold: {size_threshold})")
+        return True
+    
+    return False
+
+
+# =============================================================================
 # Gemini Review Prompt
 # =============================================================================
 
@@ -857,6 +945,64 @@ class ReviewResult:
     action_taken: str | None  # "rejected", "commented", or None
 
 
+@dataclass
+class FilterResult:
+    """Result of filtering and limiting files for review."""
+    filtered_files: list
+    original_file_count: int
+    markdown_files_filtered: int
+    is_extensive: bool
+    files_limited: int
+
+
+def filter_and_limit_files(file_diffs: list, config: dict) -> FilterResult:
+    """Filter markdown files and limit files for extensive PRs.
+    
+    Applies two filtering operations:
+    1. Filters out markdown files if FILTER_MARKDOWN_FILES is enabled
+    2. Limits files to EXTENSIVE_PR_FILE_THRESHOLD if PR is extensive
+    
+    Args:
+        file_diffs: List of file diff dicts with 'path' key
+        config: Configuration dictionary with filtering settings
+        
+    Returns:
+        FilterResult with filtered files and metadata about filtering operations
+    """
+    original_file_count = len(file_diffs)
+    markdown_files_filtered = 0
+    
+    # Filter markdown files if enabled
+    if config.get("FILTER_MARKDOWN_FILES", True):
+        logger.info(f"[FILTER] Filtering markdown files from review")
+        file_diffs, markdown_files_filtered = filter_markdown_files(file_diffs)
+        logger.info(f"[FILTER] After filtering: {len(file_diffs)} files remaining (removed {markdown_files_filtered} markdown files)")
+        
+        if len(file_diffs) == 0:
+            logger.warning(f"[FILTER] All files were markdown files - review will proceed with empty file list")
+    else:
+        logger.debug(f"[FILTER] Markdown filtering disabled via configuration")
+    
+    # Check if PR is extensive and limit files if needed
+    is_extensive = is_extensive_pr(file_diffs, config)
+    files_limited = 0
+    
+    if is_extensive:
+        file_threshold = config.get("EXTENSIVE_PR_FILE_THRESHOLD", DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)
+        if len(file_diffs) > file_threshold:
+            files_limited = len(file_diffs) - file_threshold
+            file_diffs = file_diffs[:file_threshold]
+            logger.info(f"[LIMIT] Extensive PR detected - limiting review to first {file_threshold} files (excluded {files_limited} files)")
+    
+    return FilterResult(
+        filtered_files=file_diffs,
+        original_file_count=original_file_count,
+        markdown_files_filtered=markdown_files_filtered,
+        is_extensive=is_extensive,
+        files_limited=files_limited
+    )
+
+
 def process_pr_review(
     config: dict,
     ado: "AzureDevOpsClient",
@@ -890,6 +1036,12 @@ def process_pr_review(
     logger.info(f"[REVIEW] Starting review for PR #{pr_id}: '{pr_title}' by {pr_author}")
     logger.info(f"[REVIEW] Files to review: {len(file_diffs)}")
     
+    # Filter and limit files based on configuration
+    filter_result = filter_and_limit_files(file_diffs, config)
+    file_diffs = filter_result.filtered_files
+    is_extensive = filter_result.is_extensive
+    files_limited = filter_result.files_limited
+    
     # Build prompt and call Gemini
     logger.info("[REVIEW] Building prompt and calling Gemini")
     prompt = build_review_prompt(pr, file_diffs)
@@ -917,6 +1069,13 @@ def process_pr_review(
         
         # Build comment with standard header
         comment_header = "## 🔍 Automated Regression Review\n\n"
+        
+        # Add partial review notice if PR was extensive and files were limited
+        if is_extensive and files_limited > 0:
+            comment_header += "⚠️ **Partial Review:** This PR is extensive. Review is limited to the first "
+            comment_header += f"{len(file_diffs)} files (excluded {files_limited} additional files). "
+            comment_header += "Please review remaining files manually.\n\n"
+        
         if has_blocking:
             comment_header += f"**Hey {pr_author}!** We found some items that need attention before this PR can move forward. Please review the findings below—we're here to help ensure a smooth merge.\n\n"
             comment_header += "⚠️ **Status:** Action required before merge\n\n"
@@ -947,7 +1106,7 @@ def process_pr_review(
         pr_id=pr_id,
         pr_title=pr_title,
         pr_author=pr_author,
-        files_changed=len(file_diffs),
+        files_changed=len(file_diffs),  # Use filtered count
         max_severity=max_severity,
         has_blocking=has_blocking,
         has_warning=has_warning,

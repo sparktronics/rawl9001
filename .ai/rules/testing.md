@@ -100,7 +100,7 @@ def test_save_to_storage_success(self, mocker):
 
 ```bash
 # Run all tests
-pytest test_main.py -v
+python3 -m pytest test_main.py -v
 
 # Run specific test class
 pytest test_main.py::TestGetMaxSeverity -v
