@@ -1,0 +1,62 @@
+# =============================================================================
+# Terraform Variables - Example Configuration
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# IMPORTANT: Never commit terraform.tfvars to version control!
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Required: GCP Project Configuration
+# -----------------------------------------------------------------------------
+
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+
+# -----------------------------------------------------------------------------
+# Required: Storage Configuration
+# -----------------------------------------------------------------------------
+
+# Must be globally unique
+gcs_bucket_name = "your-project-rawl9001"
+
+# -----------------------------------------------------------------------------
+# Required: Azure DevOps Configuration
+# -----------------------------------------------------------------------------
+
+azure_devops_org     = "your-azure-org"
+azure_devops_project = "Your%20Project"  # URL-encoded if contains spaces
+azure_devops_repo    = "Your-Repo-Name"
+
+# -----------------------------------------------------------------------------
+# Optional: Vertex AI Configuration (defaults to project_id and region)
+# -----------------------------------------------------------------------------
+
+# vertex_project  = "your-gcp-project-id"
+# vertex_location = "us-central1"
+# gemini_model    = "gemini-2.5-pro"
+
+# -----------------------------------------------------------------------------
+# Optional: Cloud Function Configuration
+# -----------------------------------------------------------------------------
+
+# function_memory        = "512Mi"
+# function_cpu           = "1"
+# function_timeout       = 900
+# function_max_instances = 60
+# function_concurrency   = 80
+
+# -----------------------------------------------------------------------------
+# Optional: Pub/Sub Configuration
+# -----------------------------------------------------------------------------
+
+# pubsub_topic_name         = "pr-review-trigger"
+# dlq_topic_name            = "pr-review-dlq"
+# dlq_max_delivery_attempts = 5
+
+# -----------------------------------------------------------------------------
+# Optional: System Prompt Configuration
+# -----------------------------------------------------------------------------
+
+# system_prompt_blob_path = "prompts/system-prompt.txt"

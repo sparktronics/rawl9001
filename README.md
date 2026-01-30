@@ -61,21 +61,42 @@ gcloud services enable \
 # Create Azure DevOps PAT secret
 echo -n "your-azure-pat" | gcloud secrets create azure-devops-pat --data-file=-
 
-# Create API key for the function
-echo -n "your-api-key" | gcloud secrets create pr-review-api-key --data-file=-
-
-# or update
-echo -n "your-new-api-key" | gcloud secrets versions add pr-review-api-key --data-file=-
-
-# Grant Cloud Functions access to secrets (pending)
+# Grant Cloud Functions access to Azure PAT secret
+# Note: Replace with your actual service account email
 gcloud secrets add-iam-policy-binding azure-devops-pat \
-  --member="serviceAccount:853391738715-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
-
-gcloud secrets add-iam-policy-binding pr-review-api-key \
-  --member="serviceAccount:853391738715-compute@developer.gserviceaccount.com" \
+  --member="serviceAccount:YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
+
+### Step 3b: Set Up IAM Authentication
+
+The functions use GCP IAM for authentication instead of API keys. Create service accounts for authorized callers:
+
+**Option A: Using Google Cloud Console (Web UI)**
+
+For detailed step-by-step instructions with visual navigation, see:
+📖 [**CONSOLE_IAM_SETUP.md**](./CONSOLE_IAM_SETUP.md)
+
+**Option B: Using gcloud CLI**
+
+```bash
+# Create service account for authorized callers (e.g., CI/CD pipelines)
+gcloud iam service-accounts create pr-review-caller \
+  --display-name="PR Review Function Caller"
+
+# Grant the service account permission to invoke Cloud Functions
+# (This will be done automatically via Terraform, or manually after deployment)
+
+# For testing, grant yourself permission
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="user:YOUR_EMAIL@example.com" \
+  --role="roles/run.invoker" \
+  --condition=None
+```
+
+**Option C: Using Terraform (Recommended)**
+
+See the [Terraform deployment section](#terraform-deployment) below.
 
 ### Step 4: Create Storage Bucket
 
@@ -97,7 +118,7 @@ gcloud pubsub topics list | grep pr-review
 
 #### Option A: HTTP Function (Synchronous)
 
-For direct HTTP calls (testing, manual triggers):
+For direct HTTP calls (testing, manual triggers). **Requires IAM authentication.**
 
 ```bash
 gcloud functions deploy pr-regression-review \
@@ -107,16 +128,22 @@ gcloud functions deploy pr-regression-review \
   --source=. \
   --entry-point=review_pr \
   --trigger-http \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1" \
-  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest,API_KEY=pr-review-api-key:latest"
+  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=us-central1" \
+  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
+
+# After deployment, grant invoker permission to authorized service accounts
+gcloud functions add-iam-policy-binding pr-regression-review \
+  --region=us-central1 \
+  --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
 ```
 
 #### Option B: Pub/Sub Function (Asynchronous - Recommended for Production)
 
-For async processing via Pub/Sub (with idempotency and retry handling):
+For async processing via Pub/Sub (with idempotency and retry handling). **No IAM authentication needed - triggered internally by Pub/Sub.**
 
 ```bash
 gcloud functions deploy pr-review-pubsub \
@@ -128,13 +155,13 @@ gcloud functions deploy pr-review-pubsub \
   --trigger-topic=pr-review-trigger \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1" \
-  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest,API_KEY=pr-review-api-key:latest"
+  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=us-central1" \
+  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 ```
 
 #### Option C: Webhook Receiver (For Azure DevOps Pipeline Integration)
 
-Receives webhooks and publishes to Pub/Sub for async processing:
+Receives webhooks and publishes to Pub/Sub for async processing. **Requires IAM authentication.**
 
 ```bash
 gcloud functions deploy pr-review-webhook \
@@ -144,11 +171,16 @@ gcloud functions deploy pr-review-webhook \
   --source=. \
   --entry-point=receive_webhook \
   --trigger-http \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --memory=256MB \
   --timeout=30s \
-  --set-env-vars="VERTEX_PROJECT=rawl-extractor,PUBSUB_TOPIC=pr-review-trigger" \
-  --set-secrets="API_KEY=pr-review-api-key:latest"
+  --set-env-vars="PUBSUB_TOPIC=pr-review-trigger"
+
+# After deployment, grant invoker permission
+gcloud functions add-iam-policy-binding pr-review-webhook \
+  --region=us-central1 \
+  --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
 ```
 
 ### Step 7: Verify Deployment
@@ -159,10 +191,10 @@ gcloud functions deploy pr-review-webhook \
 # Get the function URL
 gcloud functions describe pr-regression-review --region=us-central1 --format="value(serviceConfig.uri)"
 
-# Test the function
+# Test the function with IAM authentication
 curl -X POST "$(gcloud functions describe pr-regression-review --region=us-central1 --format='value(serviceConfig.uri)')" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -d '{"pr_id": 12345}'
 ```
 
@@ -184,10 +216,10 @@ gcloud functions logs read pr-review-pubsub --region=us-central1 --limit=50
 # Get webhook URL
 WEBHOOK_URL=$(gcloud functions describe pr-review-webhook --region=us-central1 --format='value(serviceConfig.uri)')
 
-# Test webhook
+# Test webhook with IAM authentication
 curl -X POST "$WEBHOOK_URL" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -d '{"pr_id": 12345, "commit_sha": "abc123def456789"}'
 ```
 
@@ -256,11 +288,17 @@ gcloud functions deploy pr-review-webhook \
 ### HTTP Request
 
 ```bash
+# Obtain identity token and call function
 curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -d '{"pr_id": 12345}'
 ```
+
+**Authentication Note:** Functions require GCP IAM authentication. You must:
+1. Have the `roles/run.invoker` permission
+2. Include a valid Google-signed identity token in the `Authorization: Bearer` header
+3. See [AUTHENTICATION.md](./AUTHENTICATION.md) for detailed authentication setup
 
 ### Response
 
@@ -283,7 +321,6 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `API_KEY` | Yes | API key for authenticating requests |
 | `GCS_BUCKET` | Yes | Cloud Storage bucket for reviews |
 | `AZURE_DEVOPS_PAT` | Yes | Azure DevOps Personal Access Token |
 | `AZURE_DEVOPS_ORG` | Yes | Azure DevOps organization name |
@@ -294,37 +331,6 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 | `GEMINI_MODEL` | No | Gemini model to use (default: `gemini-2.5-pro`) |
 | `DLQ_SUBSCRIPTION` | No | Dead Letter Queue subscription name (default: `pr-review-dlq-sub`) |
 | `SYSTEM_PROMPT_BLOB_PATH` | No | GCS path to system prompt file (default: `prompts/system-prompt.txt`) |
-| `FILTER_NON_CODE_FILES` | No | Filter out non-code files (.md, .sh, images) from review (default: `true`) |
-| `EXTENSIVE_PR_FILE_THRESHOLD` | No | File count threshold for extensive PR detection (default: `20`) |
-| `EXTENSIVE_PR_SIZE_THRESHOLD` | No | Character count threshold for extensive PR detection (default: `500000`) |
-
-## File Filtering
-
-The system automatically filters out non-code files from PR reviews to focus on code changes that may cause regressions.
-
-### Filtered File Types
-
-The following file types are excluded from review by default:
-
-- **Markdown files**: `.md`
-- **Shell scripts**: `.sh`
-- **Image files**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.svg`, `.bmp`, `.webp`, `.ico`, `.tiff`, `.tif`
-
-### Configuration
-
-File filtering can be controlled via the `FILTER_NON_CODE_FILES` environment variable:
-
-- `FILTER_NON_CODE_FILES=true` (default): Non-code files are filtered out
-- `FILTER_NON_CODE_FILES=false`: All files are included in the review
-
-### Extensive PR Handling
-
-For large PRs, the system automatically limits the number of files reviewed to prevent token limit issues:
-
-- **File count threshold**: When a PR exceeds `EXTENSIVE_PR_FILE_THRESHOLD` files (default: 20), only the first N files are reviewed
-- **Size threshold**: When total file content exceeds `EXTENSIVE_PR_SIZE_THRESHOLD` characters (default: 500,000), the PR is treated as extensive
-
-When files are limited, a notice is added to the PR comment indicating that a partial review was performed.
 
 ## System Prompt Configuration
 
@@ -408,7 +414,6 @@ cp env.example .env
 Option B: Export directly in your shell:
 
 ```bash
-export API_KEY="test-key"
 export GCS_BUCKET="your-bucket"
 export AZURE_DEVOPS_PAT="your-pat"
 export AZURE_DEVOPS_ORG="your-org"
@@ -437,11 +442,13 @@ The server will start on `http://localhost:8080` with:
 #### 4. Test the Function
 
 ```bash
+# When testing locally, IAM authentication is not enforced by the functions framework
 curl -X POST http://localhost:8080 \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: test-key" \
   -d '{"pr_id": 12345}'
 ```
+
+**Note:** Local testing with Functions Framework does not enforce IAM authentication. In production (deployed to GCP), IAM authentication is required.
 
 ### Debugging with Cursor/VS Code
 
@@ -557,8 +564,15 @@ gcloud functions deploy process-dead-letter-queue \
   --allow-unauthenticated \
   --memory=256MB \
   --timeout=540s \
+  --no-allow-unauthenticated \
   --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1,PUBSUB_TOPIC=pr-review-trigger,DLQ_SUBSCRIPTION=pr-review-dlq-sub" \
-  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest,API_KEY=pr-review-api-key:latest"
+  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
+
+# Grant invoker permission
+gcloud functions add-iam-policy-binding process-dead-letter-queue \
+  --region=us-central1 \
+  --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
 ```
 
 #### Using the DLQ Processing Function
@@ -567,17 +581,18 @@ The function validates credentials before processing and provides detailed repor
 
 **Dry Run (Preview what would be reprocessed):**
 ```bash
+# Dry run with IAM authentication
 curl -X POST "$(gcloud functions describe process-dead-letter-queue --region=us-central1 --format='value(serviceConfig.uri)')" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -d '{"max_messages": 10, "dry_run": true}'
 ```
 
 **Process Messages:**
 ```bash
 curl -X POST "$(gcloud functions describe process-dead-letter-queue --region=us-central1 --format='value(serviceConfig.uri)')" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -d '{"max_messages": 100}'
 ```
 

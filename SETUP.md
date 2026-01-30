@@ -122,3 +122,45 @@ python3 main.py 357462
 
 Replace `357462` with your actual PR ID.
 
+---
+
+## Cloud Function Authentication
+
+**Note:** When deploying to GCP as Cloud Functions, the functions use **IAM authentication** instead of API keys.
+
+### For Deployed Functions
+
+Deployed Cloud Functions require:
+1. **IAM Permission:** Caller must have `roles/run.invoker` role
+2. **Identity Token:** Valid Google-signed JWT in `Authorization: Bearer` header### Obtaining Identity Tokens
+
+**For testing with your user account:**
+```bash
+# Get your identity token
+gcloud auth print-identity-token
+
+# Call function with authentication
+curl -X POST https://FUNCTION_URL \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"pr_id": 12345}'
+```
+
+**For service accounts (CI/CD pipelines):**
+```bash
+# Authenticate as service account
+gcloud auth activate-service-account --key-file=path/to/key.json
+
+# Get identity token for the service account
+gcloud auth print-identity-token
+
+# Use in API calls
+TOKEN=$(gcloud auth print-identity-token)
+curl -H "Authorization: Bearer $TOKEN" ...
+```
+
+### Local Development
+
+When testing locally with Functions Framework, IAM authentication is **not enforced**. You can call the function directly without authentication headers.
+
+See [AUTHENTICATION.md](./AUTHENTICATION.md) for comprehensive authentication setup and troubleshooting.
