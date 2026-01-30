@@ -1,0 +1,18 @@
+steps:
+  - script: |
+      # Install gcloud (if not available)
+      curl https://sdk.cloud.google.com | bash
+      
+      # Authenticate with service account
+      gcloud auth activate-service-account \
+        --key-file=$(PR_REVIEW_SA_KEY_FILE)
+      
+      # Get identity token
+      TOKEN=$(gcloud auth print-identity-token \
+        --audiences=https://us-central1-YOUR_PROJECT.cloudfunctions.net/pr-regression-review)
+      
+      # Call function
+      curl -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"pr_id": $(System.PullRequest.PullRequestId)}' \
+        https://us-central1-YOUR_PROJECT.cloudfunctions.net/pr-regression-review
