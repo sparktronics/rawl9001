@@ -24,7 +24,7 @@ from main import (
     receive_webhook,
     process_pr_review,
     ReviewResult,
-    filter_markdown_files,
+    filter_non_code_files,
     is_extensive_pr,
 )
 
@@ -1218,14 +1218,14 @@ class TestReceiveWebhook:
 
 
 # =============================================================================
-# Markdown File Filtering Tests
+# Non-Code File Filtering Tests
 # =============================================================================
 
-class TestFilterMarkdownFiles:
-    """Tests for filter_markdown_files() function."""
+class TestFilterNonCodeFiles:
+    """Tests for filter_non_code_files() function."""
 
-    def test_filter_markdown_files_removes_md_files(self):
-        """filter_markdown_files removes .md files from the list."""
+    def test_filter_non_code_files_removes_md_files(self):
+        """filter_non_code_files removes .md files from the list."""
         file_diffs = [
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
@@ -1233,68 +1233,102 @@ class TestFilterMarkdownFiles:
             {"path": "/docs/CHANGELOG.MD", "change_type": "add", "source_content": "# Changelog", "target_content": None},
         ]
         
-        filtered, count = filter_markdown_files(file_diffs)
+        filtered, count = filter_non_code_files(file_diffs)
         
         assert count == 2
         assert len(filtered) == 2
-        assert all(diff["path"].lower().endswith(".md") == False for diff in filtered)
+        assert all(not diff["path"].lower().endswith(".md") for diff in filtered)
         assert filtered[0]["path"] == "/src/component.js"
         assert filtered[1]["path"] == "/src/styles.css"
 
-    def test_filter_markdown_files_case_insensitive(self):
-        """filter_markdown_files handles case-insensitive extensions."""
+    def test_filter_non_code_files_removes_sh_files(self):
+        """filter_non_code_files removes .sh files from the list."""
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
+            {"path": "/scripts/setup.SH", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
+        ]
+        
+        filtered, count = filter_non_code_files(file_diffs)
+        
+        assert count == 2
+        assert len(filtered) == 1
+        assert filtered[0]["path"] == "/src/component.js"
+
+    def test_filter_non_code_files_removes_image_files(self):
+        """filter_non_code_files removes image files from the list."""
+        file_diffs = [
+            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/images/logo.png", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/images/banner.jpg", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/images/icon.svg", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/images/photo.jpeg", "change_type": "add", "source_content": None, "target_content": None},
+        ]
+        
+        filtered, count = filter_non_code_files(file_diffs)
+        
+        assert count == 4
+        assert len(filtered) == 1
+        assert filtered[0]["path"] == "/src/component.js"
+
+    def test_filter_non_code_files_case_insensitive(self):
+        """filter_non_code_files handles case-insensitive extensions."""
         file_diffs = [
             {"path": "/docs/readme.md", "change_type": "add", "source_content": "content", "target_content": None},
             {"path": "/docs/README.MD", "change_type": "add", "source_content": "content", "target_content": None},
-            {"path": "/docs/Readme.Md", "change_type": "add", "source_content": "content", "target_content": None},
+            {"path": "/scripts/deploy.SH", "change_type": "add", "source_content": "content", "target_content": None},
+            {"path": "/images/logo.PNG", "change_type": "add", "source_content": None, "target_content": None},
             {"path": "/src/file.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
         ]
         
-        filtered, count = filter_markdown_files(file_diffs)
+        filtered, count = filter_non_code_files(file_diffs)
         
-        assert count == 3
+        assert count == 4
         assert len(filtered) == 1
         assert filtered[0]["path"] == "/src/file.js"
 
-    def test_filter_markdown_files_no_md_files(self):
-        """filter_markdown_files returns all files when no .md files present."""
+    def test_filter_non_code_files_no_filtered_files(self):
+        """filter_non_code_files returns all files when no filtered files present."""
         file_diffs = [
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/src/styles.css", "change_type": "add", "source_content": "css", "target_content": None},
         ]
         
-        filtered, count = filter_markdown_files(file_diffs)
+        filtered, count = filter_non_code_files(file_diffs)
         
         assert count == 0
         assert len(filtered) == 2
         assert filtered == file_diffs
 
-    def test_filter_markdown_files_only_md_files(self):
-        """filter_markdown_files returns empty list when all files are .md."""
+    def test_filter_non_code_files_only_filtered_files(self):
+        """filter_non_code_files returns empty list when all files are filtered."""
         file_diffs = [
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
-            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+            {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
+            {"path": "/images/logo.png", "change_type": "add", "source_content": None, "target_content": None},
         ]
         
-        filtered, count = filter_markdown_files(file_diffs)
+        filtered, count = filter_non_code_files(file_diffs)
         
-        assert count == 2
+        assert count == 3
         assert len(filtered) == 0
 
-    def test_filter_markdown_files_path_with_md_but_not_extension(self):
-        """filter_markdown_files does not filter files with 'md' in path but not as extension."""
+    def test_filter_non_code_files_path_with_extension_in_name(self):
+        """filter_non_code_files does not filter files with extension in path but not as file extension."""
         file_diffs = [
             {"path": "/src/md5hash.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/src/markdown-parser.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/src/shell-utils.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
         ]
         
-        filtered, count = filter_markdown_files(file_diffs)
+        filtered, count = filter_non_code_files(file_diffs)
         
         assert count == 1
-        assert len(filtered) == 2
+        assert len(filtered) == 3
         assert any(diff["path"] == "/src/md5hash.js" for diff in filtered)
         assert any(diff["path"] == "/src/markdown-parser.js" for diff in filtered)
+        assert any(diff["path"] == "/src/shell-utils.js" for diff in filtered)
 
 
 # =============================================================================
@@ -1414,13 +1448,13 @@ class TestIsExtensivePr:
 class TestProcessPrReviewWithFiltering:
     """Integration tests for process_pr_review() with markdown filtering."""
 
-    def test_process_review_filters_markdown_always(self, ado_client, sample_pr, mocker):
-        """process_pr_review filters markdown files for all PRs when enabled."""
+    def test_process_review_filters_non_code_files_always(self, ado_client, sample_pr, mocker):
+        """process_pr_review filters non-code files for all PRs when enabled."""
         config = {
             "GCS_BUCKET": "test-bucket",
             "EXTENSIVE_PR_FILE_THRESHOLD": 2,
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
-            "FILTER_MARKDOWN_FILES": True,
+            "FILTER_NON_CODE_FILES": True,
         }
         
         # PR with markdown files (filtering should happen regardless of PR size)
@@ -1440,13 +1474,13 @@ class TestProcessPrReviewWithFiltering:
         # Verify Gemini was called (prompt built with filtered files)
         assert result.review_text == "# Review\n\n**Priority:** note"
 
-    def test_process_review_filters_markdown_for_small_pr(self, ado_client, sample_pr, mocker):
-        """process_pr_review filters markdown files even for small PRs."""
+    def test_process_review_filters_non_code_files_for_small_pr(self, ado_client, sample_pr, mocker):
+        """process_pr_review filters non-code files even for small PRs."""
         config = {
             "GCS_BUCKET": "test-bucket",
             "EXTENSIVE_PR_FILE_THRESHOLD": DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD,
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
-            "FILTER_MARKDOWN_FILES": True,
+            "FILTER_NON_CODE_FILES": True,
         }
         
         # Small PR with markdown files (should still filter)
@@ -1464,12 +1498,12 @@ class TestProcessPrReviewWithFiltering:
         assert result.files_changed == 1
 
     def test_process_review_filtering_disabled(self, ado_client, sample_pr, mocker):
-        """process_pr_review does not filter markdown when FILTER_MARKDOWN_FILES is False, but still limits extensive PRs."""
+        """process_pr_review does not filter non-code files when FILTER_NON_CODE_FILES is False, but still limits extensive PRs."""
         config = {
             "GCS_BUCKET": "test-bucket",
             "EXTENSIVE_PR_FILE_THRESHOLD": 5,  # Higher threshold so PR is not extensive
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
-            "FILTER_MARKDOWN_FILES": False,  # Disabled
+            "FILTER_NON_CODE_FILES": False,  # Disabled
         }
         
         # PR with markdown files but not extensive (below threshold)
@@ -1493,7 +1527,7 @@ class TestProcessPrReviewWithFiltering:
             "GCS_BUCKET": "test-bucket",
             "EXTENSIVE_PR_FILE_THRESHOLD": 3,
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
-            "FILTER_MARKDOWN_FILES": True,
+            "FILTER_NON_CODE_FILES": True,
         }
         
         # Create extensive PR with 5 files (should be limited to 3)
