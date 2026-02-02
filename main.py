@@ -7,7 +7,6 @@ Gemini (Vertex AI) for regression-focused review, stores the result in Cloud Sto
 and optionally comments/rejects the PR based on severity.
 
 Environment Variables:
-    API_KEY               - API key for authenticating requests
     GCS_BUCKET            - Cloud Storage bucket for storing reviews
     AZURE_DEVOPS_PAT      - Personal Access Token
     AZURE_DEVOPS_ORG      - Organization name
@@ -16,6 +15,10 @@ Environment Variables:
     VERTEX_PROJECT        - GCP Project ID
     VERTEX_LOCATION       - GCP Region (default: us-central1)
     PUBSUB_TOPIC          - Pub/Sub topic for webhook messages (default: pr-review-trigger)
+
+Authentication:
+    Functions use GCP IAM authentication. Callers must have the roles/run.invoker
+    permission and provide a valid Google-signed identity token in the Authorization header.
 
 Entry Points:
     review_pr          - HTTP endpoint for synchronous PR review
@@ -89,11 +92,12 @@ DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD = 500000  # Default character count threshol
 def load_config() -> tuple[dict, list]:
     """Load configuration from environment variables.
     
+    Note: API_KEY is no longer required as authentication is handled by GCP IAM.
+    
     Returns:
         tuple: (config dict, list of missing required vars)
     """
     required = [
-        "API_KEY",
         "GCS_BUCKET",
         "AZURE_DEVOPS_PAT",
         "AZURE_DEVOPS_ORG", 
@@ -1143,9 +1147,15 @@ def make_response(data: dict, status: int = 200) -> tuple:
 def review_pr(request):
     """HTTP Cloud Function entry point for PR regression review.
     
+    Authentication:
+        Requires GCP IAM authentication with roles/run.invoker permission.
+        Callers must provide a valid Google-signed identity token in the
+        Authorization: Bearer <token> header. Authentication is enforced by
+        Cloud Run before this function is invoked.
+    
     Request:
         POST with JSON body: {"pr_id": 12345}
-        Header: X-API-Key: <your-api-key>
+        Header: Authorization: Bearer <google-identity-token>
         
     Response:
         JSON with review results and actions taken
@@ -1164,12 +1174,9 @@ def review_pr(request):
             )
         logger.info("[CONFIG] All required environment variables loaded")
         
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key or api_key != config["API_KEY"]:
-            logger.warning("[AUTH] Invalid or missing API key")
-            return make_response({"error": "Invalid or missing API key"}, 401)
-        logger.info("[AUTH] API key validated")
+        # Note: Authentication is handled by Cloud Run IAM.
+        # Only authorized service accounts/users with roles/run.invoker can reach this code.
+        logger.info("[AUTH] Request authenticated via GCP IAM")
         
         # Parse request
         try:
@@ -1436,10 +1443,12 @@ def review_pr_pubsub(cloud_event: CloudEvent) -> None:
 def load_webhook_config() -> tuple[dict, list]:
     """Load minimal configuration for webhook receiver.
     
+    Note: API_KEY is no longer required as authentication is handled by GCP IAM.
+    
     Returns:
         tuple: (config dict, list of missing required vars)
     """
-    required = ["API_KEY", "VERTEX_PROJECT"]
+    required = ["VERTEX_PROJECT"]
     
     config = {}
     missing = []
@@ -1470,10 +1479,16 @@ def process_dead_letter_queue(request):
     3. Reset idempotency markers to allow reprocessing
     4. Republish messages to the main processing topic
 
+    Authentication:
+        Requires GCP IAM authentication with roles/run.invoker permission.
+        Callers must provide a valid Google-signed identity token in the
+        Authorization: Bearer <token> header. Authentication is enforced by
+        Cloud Run before this function is invoked.
+
     Request Format:
         POST /
         Content-Type: application/json
-        X-API-Key: <api-key>
+        Authorization: Bearer <google-identity-token>
 
         {
             "max_messages": 10,  // Optional: max messages to process (default: 100)
@@ -1500,13 +1515,9 @@ def process_dead_letter_queue(request):
             logger.error(f"[CONFIG] Missing required environment variables: {missing}")
             return make_response({"error": f"Missing config: {', '.join(missing)}"}, 500)
 
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key or api_key != config["API_KEY"]:
-            logger.warning("[AUTH] Invalid or missing API key")
-            return make_response({"error": "Invalid or missing API key"}, 401)
-
-        logger.info("[AUTH] API key validated")
+        # Note: Authentication is handled by Cloud Run IAM.
+        # Only authorized service accounts/users with roles/run.invoker can reach this code.
+        logger.info("[AUTH] Request authenticated via GCP IAM")
 
         # Parse request parameters
         request_json = request.get_json(silent=True) or {}
@@ -1718,10 +1729,16 @@ def receive_webhook(request):
     Validates the request and publishes a message to Pub/Sub for async processing.
     This decouples the webhook acknowledgment from the actual PR review processing.
 
+    Authentication:
+        Requires GCP IAM authentication with roles/run.invoker permission.
+        Callers must provide a valid Google-signed identity token in the
+        Authorization: Bearer <token> header. Authentication is enforced by
+        Cloud Run before this function is invoked.
+
     Request Format:
         POST /
         Content-Type: application/json
-        X-API-Key: <api-key>
+        Authorization: Bearer <google-identity-token>
 
         {
             "pr_id": 357462,
@@ -1740,23 +1757,15 @@ def receive_webhook(request):
         logger.info("=" * 60)
         logger.info("[WEBHOOK] PR Review webhook received")
         
-        # Load minimal config (only need API_KEY and PUBSUB_TOPIC)
+        # Load minimal config
         config, missing = load_webhook_config()
         if missing:
             logger.error(f"[CONFIG] Missing required environment variables: {missing}")
             return {"error": f"Server configuration error: missing {missing}"}, 500
         
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key:
-            logger.warning("[AUTH] Missing X-API-Key header")
-            return {"error": "Missing X-API-Key header"}, 401
-        
-        if api_key != config["API_KEY"]:
-            logger.warning("[AUTH] Invalid API key")
-            return {"error": "Invalid API key"}, 401
-        
-        logger.info("[AUTH] API key validated")
+        # Note: Authentication is handled by Cloud Run IAM.
+        # Only authorized service accounts/users with roles/run.invoker can reach this code.
+        logger.info("[AUTH] Request authenticated via GCP IAM")
         
         # Parse JSON body
         try:

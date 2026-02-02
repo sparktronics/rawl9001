@@ -1,0 +1,50 @@
+swagger: '2.0'
+info:
+  title: PR Review API
+  version: 1.0.0
+host: cog01k6msqf1e7e5z9m5grb69qmrm.apigateway.us-central1.gateway.dev
+schemes:
+  - https
+paths:
+  /webhook:
+    post:
+      summary: Webhook receiver for PR review
+      operationId: receiveWebhook
+      responses:
+        "202":
+          description: Accepted for processing
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal server error
+      x-google-backend:
+        address: https://us-central1-cog01k6msqf1e7e5z9m5grb69qmrm.cloudfunctions.net/pr-review-webhook
+        deadline: 600.0  # 10 minutes (API Gateway maximum)
+      security:
+        - api_key: []
+  /review:
+    post:
+      summary: Review Pull Request
+      operationId: reviewPR
+      responses:
+        "200":
+          description: Review completed successfully
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal server error
+      x-google-backend:
+        address: https://us-central1-cog01k6msqf1e7e5z9m5grb69qmrm.cloudfunctions.net/pr-regression-review
+        deadline: 600.0  # 10 minutes (API Gateway maximum)
+      security:
+        - api_key: []
+securityDefinitions:
+  api_key:
+    type: apiKey
+    in: header
+    name: x-api-key
+    description: API key for authentication
