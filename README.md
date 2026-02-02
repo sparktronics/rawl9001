@@ -131,7 +131,7 @@ gcloud functions deploy pr-regression-review \
   --no-allow-unauthenticated \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=us-central1" \
+  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3-pro-preview" \
   --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 
 # After deployment, grant invoker permission to authorized service accounts
@@ -155,7 +155,7 @@ gcloud functions deploy pr-review-pubsub \
   --trigger-topic=pr-review-trigger \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=us-central1" \
+  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm" \
   --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 ```
 
@@ -182,6 +182,51 @@ gcloud functions add-iam-policy-binding pr-review-webhook \
   --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/run.invoker"
 ```
+
+### Step 6b: API Gateway (Optional)
+
+To expose the HTTP review function through API Gateway (e.g. for API key auth, custom domain, or rate limiting), create the API and gateway after the API has been created in the project.
+
+**Prerequisites:** Enable the API Gateway API (`gcloud services enable apigateway.googleapis.com`). Create the API resource if needed: `gcloud api-gateway apis create pr-review-api --project=YOUR_PROJECT_ID`. The HTTP function `pr-regression-review` must be deployed; a service account with `roles/run.invoker` on that function is used for backend auth.
+
+**1. Configure the API** (create an API config from the OpenAPI spec):
+
+```bash
+gcloud api-gateway api-configs create pr-review-config \
+  --api=pr-review-api \
+  --openapi-spec=api/api-spec.yaml \
+  --backend-auth-service-account=YOUR_BACKEND_SA@YOUR_PROJECT_ID.iam.gserviceaccount.com
+```
+
+Replace `YOUR_BACKEND_SA` with the service account that API Gateway will use to call the Cloud Function (e.g. `id-pr-review-caller` or `pr-review-caller`), and `YOUR_PROJECT_ID` with your GCP project ID. That service account must have `roles/run.invoker` on the `pr-regression-review` function.
+
+**2. Deploy the API Gateway** (create the gateway using that config):
+
+```bash
+gcloud api-gateway gateways create pr-review-gateway \
+  --api=pr-review-api \
+  --api-config=pr-review-config \
+  --location=us-central1
+```
+
+After creation, use the gateway URL (shown in the output or via `gcloud api-gateway gateways describe pr-review-gateway --location=us-central1`) to send requests to `/review` instead of the Cloud Function URL directly.
+
+**Updating the API spec:** `api-configs update` cannot change the OpenAPI spec (only display name and labels). To roll out a new spec:
+
+1. Create a new API config (use a new ID, e.g. `pr-review-config-v2`):
+   ```bash
+   gcloud api-gateway api-configs create pr-review-config-v2 \
+     --api=pr-review-api \
+     --openapi-spec=api/api-spec.yaml \
+     --backend-auth-service-account=YOUR_BACKEND_SA@YOUR_PROJECT_ID.iam.gserviceaccount.com
+   ```
+2. Point the gateway at the new config:
+   ```bash
+   gcloud api-gateway gateways update pr-review-gateway \
+     --api=pr-review-api \
+     --api-config=pr-review-config-v2 \
+     --location=us-central1
+   ```
 
 ### Step 7: Verify Deployment
 
