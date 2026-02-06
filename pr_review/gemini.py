@@ -1,0 +1,63 @@
+"""Vertex AI / Gemini integration."""
+
+import logging
+import time
+
+from google import genai
+
+from pr_review.prompt import SYSTEM_PROMPT
+from pr_review.utils import timed_operation
+
+logger = logging.getLogger("pr_review")
+
+
+def call_gemini(config: dict, prompt: str) -> str:
+    """Send prompt to Gemini via Vertex AI and return response."""
+
+    model_name = config["GEMINI_MODEL"]
+    project = config["VERTEX_PROJECT"]
+    location = config["VERTEX_LOCATION"]
+
+    logger.info(f"[GEMINI] Calling Vertex AI | Model: {model_name} | Project: {project} | Location: {location}")
+    logger.info(f"[GEMINI] Prompt size: {len(prompt)} chars | System prompt: {len(SYSTEM_PROMPT)} chars")
+    logger.debug(f"[GEMINI] Config: max_output_tokens=8192, temperature=0.2")
+
+    with timed_operation() as elapsed:
+        try:
+            # Initialize the GenAI client for Vertex AI
+            client = genai.Client(
+                vertexai=True,
+                project=project,
+                location=location,
+            )
+
+            logger.debug(f"[GEMINI] Client initialized in {elapsed():.0f}ms")
+
+            # Generate content with system instruction
+            generate_start = time.time()
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={
+                    "system_instruction": SYSTEM_PROMPT,
+                    "max_output_tokens": 8192,
+                    "temperature": 0.2,  # Lower for more focused analysis
+                },
+            )
+
+            generate_time = (time.time() - generate_start) * 1000
+            response_size = len(response.text) if response.text else 0
+
+            logger.info(f"[GEMINI] Response received | {response_size} chars | Generate: {generate_time:.0f}ms | Total: {elapsed():.0f}ms")
+
+            # Log usage metadata if available
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                logger.info(f"[GEMINI] Tokens - Input: {getattr(usage, 'prompt_token_count', 'N/A')} | Output: {getattr(usage, 'candidates_token_count', 'N/A')}")
+
+            return response.text
+
+        except Exception as e:
+            logger.error(f"[GEMINI] API call FAILED | {elapsed():.0f}ms | Error type: {type(e).__name__}")
+            logger.error(f"[GEMINI] Error details: {str(e)}")
+            raise

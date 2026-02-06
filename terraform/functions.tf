@@ -19,6 +19,72 @@ data "archive_file" "function_source" {
     content  = file("${path.module}/../requirements.txt")
     filename = "requirements.txt"
   }
+
+  # pr_review/ package modules
+  source {
+    content  = file("${path.module}/../pr_review/__init__.py")
+    filename = "pr_review/__init__.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/utils.py")
+    filename = "pr_review/utils.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/config.py")
+    filename = "pr_review/config.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/models.py")
+    filename = "pr_review/models.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/azure_client.py")
+    filename = "pr_review/azure_client.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/storage.py")
+    filename = "pr_review/storage.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/idempotency.py")
+    filename = "pr_review/idempotency.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/severity.py")
+    filename = "pr_review/severity.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/filtering.py")
+    filename = "pr_review/filtering.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/prompt.py")
+    filename = "pr_review/prompt.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/gemini.py")
+    filename = "pr_review/gemini.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/review.py")
+    filename = "pr_review/review.py"
+  }
+
+  source {
+    content  = file("${path.module}/../pr_review/entry_points.py")
+    filename = "pr_review/entry_points.py"
+  }
 }
 
 # -----------------------------------------------------------------------------

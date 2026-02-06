@@ -4,8 +4,6 @@
 .env.*.local
 my-env.sh
 .cursor/
-.env.example
-.gcloudignore
 env.example
 
 # Byte-compiled / optimized / DLL files
