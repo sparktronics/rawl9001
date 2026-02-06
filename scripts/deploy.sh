@@ -21,6 +21,11 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Resolve repo root (works regardless of where the script is called from)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -99,17 +104,22 @@ print_success "Project configured: $PROJECT_ID"
 
 # Check if required files exist
 if [ ! -f "main.py" ]; then
-    print_error "main.py not found in current directory"
-    echo "Please run this script from the repository root"
+    print_error "main.py not found in repository root ($REPO_ROOT)"
     exit 1
 fi
 print_success "main.py found"
 
 if [ ! -f "requirements.txt" ]; then
-    print_error "requirements.txt not found in current directory"
+    print_error "requirements.txt not found in repository root ($REPO_ROOT)"
     exit 1
 fi
 print_success "requirements.txt found"
+
+if [ ! -d "pr_review" ]; then
+    print_error "pr_review/ package not found in repository root ($REPO_ROOT)"
+    exit 1
+fi
+print_success "pr_review/ package found"
 
 # =============================================================================
 # Deployment

@@ -1,0 +1,45 @@
+# .gcloudignore - Excluded from gcloud functions deploy (Cloud Build upload)
+# main.py, requirements.txt, and pr_review/ package are needed at runtime.
+
+# Version control and IDE
+.git
+.gitignore
+.cursorrules
+.claude
+.cursor
+.ai
+.vscode
+
+# CI/CD and deployment
+.github
+azure
+terraform
+scripts
+service.yaml
+
+# API Gateway config (used when creating gateway, not at function runtime)
+api
+
+# Tests
+tests
+
+# Documentation
+docs
+*.md
+
+# Prompts (function uses embedded SYSTEM_PROMPT; external prompt is loaded from GCS)
+prompts
+
+# Local env and Python artifacts
+.env
+.env.*
+env.example
+*.pyc
+__pycache__
+.pytest_cache
+.coverage
+htmlcov
+*.egg-info
+.eggs
+dist
+build

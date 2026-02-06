@@ -75,7 +75,7 @@ The functions use GCP IAM for authentication instead of API keys. Create service
 **Option A: Using Google Cloud Console (Web UI)**
 
 For detailed step-by-step instructions with visual navigation, see:
-📖 [**CONSOLE_IAM_SETUP.md**](./CONSOLE_IAM_SETUP.md)
+📖 [**CONSOLE_IAM_SETUP.md**](./docs/CONSOLE_IAM_SETUP.md)
 
 **Option B: Using gcloud CLI**
 
@@ -277,7 +277,7 @@ After modifying the cloud function code (e.g., `main.py`, `requirements.txt`), y
 The `deploy.sh` script automates the deployment process with built-in validation:
 
 ```bash
-./deploy.sh
+./scripts/deploy.sh
 ```
 
 The script will:
@@ -293,7 +293,7 @@ The script will:
 
 **Make the script executable (first time only):**
 ```bash
-chmod +x deploy.sh
+chmod +x scripts/deploy.sh
 ```
 
 #### Option 2: Manual Deployment
@@ -343,7 +343,7 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 **Authentication Note:** Functions require GCP IAM authentication. You must:
 1. Have the `roles/run.invoker` permission
 2. Include a valid Google-signed identity token in the `Authorization: Bearer` header
-3. See [AUTHENTICATION.md](./AUTHENTICATION.md) for detailed authentication setup
+3. See [AUTHENTICATION.md](./docs/AUTHENTICATION.md) for detailed authentication setup
 
 ### Response
 

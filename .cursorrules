@@ -39,14 +39,20 @@ Apply rules from:
 ### This Project
 - **Purpose:** PR regression review automation for AEM frontend components
 - **Runtime:** GCP Cloud Functions (Gen2)
-- **Main entry:** `main.py` → `review_pr` function
+- **Main entry:** `main.py` (thin facade) → `pr_review/` package
 
 ### Key Files
-| File | Purpose |
-|------|---------|
-| `main.py` | Cloud Function entry point |
-| `test_main.py` | Main test file |
-| `test_vertex.py` | Vertex AI testing |
+| File / Directory | Purpose |
+|------------------|---------|
+| `main.py` | Thin facade re-exporting Cloud Function entry points |
+| `pr_review/` | Python package with all business logic |
+| `pr_review/entry_points.py` | Cloud Function handlers (review_pr, receive_webhook, etc.) |
+| `pr_review/review.py` | Core review orchestration |
+| `pr_review/azure_client.py` | Azure DevOps REST client |
+| `tests/test_main.py` | Unit tests |
+| `tests/test_vertex.py` | Vertex AI integration test |
+| `docs/` | Documentation (SETUP, AUTHENTICATION, etc.) |
+| `scripts/` | Deployment and setup scripts |
 | `requirements.txt` | Python dependencies |
 | `.env` | Local secrets (git-ignored) |
 

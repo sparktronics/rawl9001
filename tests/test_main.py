@@ -1,6 +1,6 @@
-"""Unit tests for main.py - PR Regression Review Cloud Function.
+"""Unit tests for PR Regression Review Cloud Function.
 
-Run with: pytest test_main.py -v
+Run with: pytest tests/ -v
 """
 
 import pytest
@@ -8,74 +8,26 @@ from unittest.mock import MagicMock, patch
 
 from google.api_core.exceptions import PreconditionFailed
 
-from main import (
-    AzureDevOpsClient,
-    save_to_storage,
-    get_max_severity,
-    build_review_prompt,
+from pr_review.azure_client import AzureDevOpsClient
+from pr_review.storage import save_to_storage
+from pr_review.severity import get_max_severity
+from pr_review.prompt import build_review_prompt
+from pr_review.idempotency import (
     check_and_claim_processing,
     update_marker_completed,
     update_marker_for_retry,
     update_marker_failed,
     MAX_RETRY_ATTEMPTS,
+)
+from pr_review.config import (
     DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD,
     DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD,
     load_webhook_config,
-    receive_webhook,
-    process_pr_review,
-    ReviewResult,
-    filter_non_code_files,
-    is_extensive_pr,
 )
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
-
-@pytest.fixture
-def ado_client():
-    """Create an AzureDevOpsClient instance for testing."""
-    return AzureDevOpsClient(
-        org="test-org",
-        project="test-project",
-        repo="test-repo",
-        pat="fake-pat-token",
-    )
-
-
-@pytest.fixture
-def sample_pr():
-    """Sample PR metadata response."""
-    return {
-        "pullRequestId": 12345,
-        "title": "Add new feature",
-        "description": "This PR adds a new feature to the component.",
-        "createdBy": {"displayName": "John Doe"},
-        "sourceRefName": "refs/heads/feature/new-feature",
-        "targetRefName": "refs/heads/main",
-        "lastMergeSourceCommit": {"commitId": "abc123def456"},
-        "lastMergeTargetCommit": {"commitId": "789xyz000111"},
-    }
-
-
-@pytest.fixture
-def sample_file_diffs():
-    """Sample file diffs for prompt building."""
-    return [
-        {
-            "path": "/src/component.js",
-            "change_type": "edit",
-            "source_content": "function newCode() { return true; }",
-            "target_content": "function oldCode() { return false; }",
-        },
-        {
-            "path": "/src/styles.css",
-            "change_type": "add",
-            "source_content": ".new-class { color: red; }",
-            "target_content": None,
-        },
-    ]
+from pr_review.entry_points import receive_webhook
+from pr_review.review import process_pr_review
+from pr_review.models import ReviewResult
+from pr_review.filtering import filter_non_code_files, is_extensive_pr
 
 
 # =============================================================================
@@ -152,8 +104,8 @@ class TestProcessPrReview:
 **Priority:** action-required
 
 This change breaks existing functionality."""
-        mocker.patch("main.call_gemini", return_value=mock_review)
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
         mocker.patch.object(ado_client, "get_current_user_id", return_value="user-123")
         mocker.patch.object(ado_client, "reject_pr")
@@ -185,8 +137,8 @@ This change breaks existing functionality."""
 **Priority:** review-recommended
 
 This might cause problems."""
-        mocker.patch("main.call_gemini", return_value=mock_review)
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
         mocker.patch.object(ado_client, "reject_pr")
 
@@ -216,8 +168,8 @@ This might cause problems."""
 **Priority:** note
 
 Just a note."""
-        mocker.patch("main.call_gemini", return_value=mock_review)
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
         mocker.patch.object(ado_client, "reject_pr")
 
@@ -237,8 +189,8 @@ Just a note."""
         """process_pr_review extracts title and author from PR metadata."""
         config = {"GCS_BUCKET": "test-bucket"}
 
-        mocker.patch("main.call_gemini", return_value="# Review\n**Severity:** info")
-        mocker.patch("main.save_to_storage", return_value="gs://bucket/path.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n**Severity:** info")
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://bucket/path.md")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -251,8 +203,8 @@ Just a note."""
         config = {"GCS_BUCKET": "test-bucket"}
 
         expected_review = "# Full Review Content\n\nDetailed analysis here."
-        mocker.patch("main.call_gemini", return_value=expected_review)
-        mocker.patch("main.save_to_storage", return_value="gs://bucket/path.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value=expected_review)
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://bucket/path.md")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -262,8 +214,8 @@ Just a note."""
         """process_pr_review saves review to cloud storage."""
         config = {"GCS_BUCKET": "my-bucket"}
 
-        mocker.patch("main.call_gemini", return_value="# Review")
-        mock_save = mocker.patch("main.save_to_storage", return_value="gs://my-bucket/reviews/path.md")
+        mocker.patch("pr_review.gemini.call_gemini", return_value="# Review")
+        mock_save = mocker.patch("pr_review.storage.save_to_storage", return_value="gs://my-bucket/reviews/path.md")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -283,11 +235,11 @@ class TestAzureDevOpsClientRequest:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"id": 1, "name": "test"}
-        
-        mock_request = mocker.patch("main.requests.request", return_value=mock_response)
-        
+
+        mock_request = mocker.patch("pr_review.azure_client.requests.request", return_value=mock_response)
+
         result = ado_client._get("/test/endpoint")
-        
+
         mock_request.assert_called_once()
         call_args = mock_request.call_args
         assert call_args[0][0] == "GET"
@@ -299,12 +251,12 @@ class TestAzureDevOpsClientRequest:
         mock_response = MagicMock()
         mock_response.status_code = 201
         mock_response.json.return_value = {"created": True}
-        
-        mock_request = mocker.patch("main.requests.request", return_value=mock_response)
-        
+
+        mock_request = mocker.patch("pr_review.azure_client.requests.request", return_value=mock_response)
+
         payload = {"content": "test data"}
         result = ado_client._post("/test/endpoint", payload)
-        
+
         mock_request.assert_called_once()
         call_args = mock_request.call_args
         assert call_args[0][0] == "POST"
@@ -316,12 +268,12 @@ class TestAzureDevOpsClientRequest:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"updated": True}
-        
-        mock_request = mocker.patch("main.requests.request", return_value=mock_response)
-        
+
+        mock_request = mocker.patch("pr_review.azure_client.requests.request", return_value=mock_response)
+
         payload = {"vote": -10}
         result = ado_client._put("/test/endpoint", payload)
-        
+
         mock_request.assert_called_once()
         call_args = mock_request.call_args
         assert call_args[0][0] == "PUT"
@@ -335,9 +287,9 @@ class TestAzureDevOpsClientMethods:
     def test_get_pull_request(self, ado_client, sample_pr, mocker):
         """get_pull_request fetches PR metadata."""
         mocker.patch.object(ado_client, "_get", return_value=sample_pr)
-        
+
         result = ado_client.get_pull_request(12345)
-        
+
         ado_client._get.assert_called_once_with("/git/repositories/test-repo/pullrequests/12345")
         assert result["pullRequestId"] == 12345
         assert result["title"] == "Add new feature"
@@ -347,11 +299,11 @@ class TestAzureDevOpsClientMethods:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "file content here"
-        
-        mocker.patch("main.requests.get", return_value=mock_response)
-        
+
+        mocker.patch("pr_review.azure_client.requests.get", return_value=mock_response)
+
         result = ado_client.get_file_content("/src/file.js", "abc123")
-        
+
         assert result == "file content here"
 
     def test_get_pr_diff(self, ado_client, sample_pr, mocker):
@@ -364,13 +316,13 @@ class TestAzureDevOpsClientMethods:
             }
         ])
         mocker.patch.object(
-            ado_client, 
-            "get_file_content", 
+            ado_client,
+            "get_file_content",
             side_effect=["new content", "old content"]
         )
-        
+
         result = ado_client.get_pr_diff(12345)
-        
+
         assert len(result) == 1
         assert result[0]["path"] == "/src/test.js"
         assert result[0]["change_type"] == "edit"
@@ -390,30 +342,30 @@ class TestSaveToStorage:
         mock_blob = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.storage.storage.Client", return_value=mock_client)
+
         review_content = "# Review\n\nThis is a test review."
         result = save_to_storage("test-bucket", 12345, review_content)
-        
+
         # Verify bucket was accessed
         mock_client.bucket.assert_called_once_with("test-bucket")
-        
+
         # Verify blob was created with correct path pattern
         blob_call = mock_bucket.blob.call_args[0][0]
         assert blob_call.startswith("reviews/")
         assert "pr-12345" in blob_call
         assert blob_call.endswith("-review.md")
-        
+
         # Verify upload was called
         mock_blob.upload_from_string.assert_called_once_with(
-            review_content, 
+            review_content,
             content_type="text/markdown"
         )
-        
+
         # Verify return path format
         assert result.startswith("gs://test-bucket/reviews/")
 
@@ -429,10 +381,10 @@ class TestGetMaxSeverity:
         """Returns 'action-required' when action-required priority found."""
         review = """
         # Review
-        
+
         ### Finding: Critical issue
         **Priority:** action-required
-        
+
         This is an action-required issue.
         """
         assert get_max_severity(review) == "action-required"
@@ -441,10 +393,10 @@ class TestGetMaxSeverity:
         """Returns 'review-recommended' when review-recommended priority found (no action-required)."""
         review = """
         # Review
-        
+
         ### Finding: Potential issue
         **Priority:** review-recommended
-        
+
         This could cause problems.
         """
         assert get_max_severity(review) == "review-recommended"
@@ -453,10 +405,10 @@ class TestGetMaxSeverity:
         """Returns 'note' when no action-required or review-recommended found."""
         review = """
         # Review
-        
+
         ### Finding: Minor note
         **Priority:** note
-        
+
         Just an observation.
         """
         assert get_max_severity(review) == "note"
@@ -465,10 +417,10 @@ class TestGetMaxSeverity:
         """Returns 'action-required' even when review-recommended is also present."""
         review = """
         # Review
-        
+
         ### Finding: Review recommended issue
         **Priority:** review-recommended
-        
+
         ### Finding: Critical issue
         **Priority:** action-required
         """
@@ -485,22 +437,22 @@ class TestBuildReviewPrompt:
     def test_build_review_prompt(self, sample_pr, sample_file_diffs):
         """build_review_prompt constructs prompt with PR context and diffs."""
         prompt = build_review_prompt(sample_pr, sample_file_diffs)
-        
+
         # Check PR metadata is included
         assert "Add new feature" in prompt
         assert "12345" in prompt
         assert "John Doe" in prompt
         assert "feature/new-feature" in prompt
         assert "main" in prompt
-        
+
         # Check file paths are included
         assert "/src/component.js" in prompt
         assert "/src/styles.css" in prompt
-        
+
         # Check change types are included
         assert "edit" in prompt
         assert "add" in prompt
-        
+
         # Check file contents are included
         assert "function newCode()" in prompt
         assert "function oldCode()" in prompt
@@ -509,13 +461,13 @@ class TestBuildReviewPrompt:
     def test_build_review_prompt_with_description(self, sample_pr, sample_file_diffs):
         """build_review_prompt includes PR description."""
         prompt = build_review_prompt(sample_pr, sample_file_diffs)
-        
+
         assert "This PR adds a new feature to the component." in prompt
 
     def test_build_review_prompt_ends_with_instruction(self, sample_pr, sample_file_diffs):
         """build_review_prompt ends with review instruction."""
         prompt = build_review_prompt(sample_pr, sample_file_diffs)
-        
+
         assert prompt.strip().endswith("Please provide your regression-focused review.")
 
 
@@ -530,21 +482,21 @@ class TestCheckAndClaimProcessing:
         """Returns True and creates marker when no existing marker."""
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is True
         mock_bucket.blob.assert_called_once_with("idempotency/pr-12345-abc123def456.json")
         mock_blob.upload_from_string.assert_called_once()
-        
+
         # Verify atomic write was used
         call_kwargs = mock_blob.upload_from_string.call_args[1]
         assert call_kwargs["if_generation_match"] == 0
@@ -553,7 +505,7 @@ class TestCheckAndClaimProcessing:
     def test_skip_when_marker_completed(self, mocker):
         """Returns False when marker exists with completed status."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -561,24 +513,24 @@ class TestCheckAndClaimProcessing:
             "commit_sha": "abc123def456",
             "status": "completed"
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is False
         mock_blob.upload_from_string.assert_not_called()
 
     def test_skip_when_marker_failed(self, mocker):
         """Returns False when marker exists with failed status."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -587,23 +539,23 @@ class TestCheckAndClaimProcessing:
             "status": "failed",
             "retry_count": 3
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is False
 
     def test_allow_retry_when_processing_under_limit(self, mocker):
         """Returns True when marker is processing and retry_count < MAX."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -612,23 +564,23 @@ class TestCheckAndClaimProcessing:
             "status": "processing",
             "retry_count": 1
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is True
 
     def test_skip_when_max_retries_exceeded(self, mocker):
         """Returns False when marker is processing but retry_count >= MAX."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -637,17 +589,17 @@ class TestCheckAndClaimProcessing:
             "status": "processing",
             "retry_count": MAX_RETRY_ATTEMPTS
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is False
 
     def test_skip_on_race_condition(self, mocker):
@@ -655,40 +607,40 @@ class TestCheckAndClaimProcessing:
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
         mock_blob.upload_from_string.side_effect = PreconditionFailed("Precondition failed")
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         assert result is False
 
     def test_marker_content_format(self, mocker):
         """Marker JSON contains expected fields."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         check_and_claim_processing("test-bucket", 12345, "abc123def456")
-        
+
         # Get the JSON content that was uploaded
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
-        
+
         assert marker["pr_id"] == 12345
         assert marker["commit_sha"] == "abc123def456"
         assert marker["status"] == "processing"
@@ -702,25 +654,25 @@ class TestUpdateMarkerCompleted:
     def test_update_marker_success(self, mocker):
         """Updates marker with completion status."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         update_marker_completed("test-bucket", 12345, "abc123def456", "warning", True)
-        
+
         mock_bucket.blob.assert_called_once_with("idempotency/pr-12345-abc123def456.json")
         mock_blob.upload_from_string.assert_called_once()
-        
+
         # Verify marker content
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
-        
+
         assert marker["pr_id"] == 12345
         assert marker["commit_sha"] == "abc123def456"
         assert marker["status"] == "completed"
@@ -735,7 +687,7 @@ class TestUpdateMarkerForRetry:
     def test_first_retry_returns_true(self, mocker):
         """Returns True on first retry (retry_count < MAX)."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -744,19 +696,19 @@ class TestUpdateMarkerForRetry:
             "status": "processing",
             "retry_count": 0
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = update_marker_for_retry("test-bucket", 12345, "abc123def456", "Test error")
-        
+
         assert result is True
-        
+
         # Verify marker was updated with incremented retry_count
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
@@ -766,7 +718,7 @@ class TestUpdateMarkerForRetry:
     def test_max_retries_returns_false(self, mocker):
         """Returns False when max retries exceeded."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
         mock_blob.download_as_text.return_value = json.dumps({
@@ -775,19 +727,19 @@ class TestUpdateMarkerForRetry:
             "status": "processing",
             "retry_count": MAX_RETRY_ATTEMPTS - 1  # One more will exceed
         })
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = update_marker_for_retry("test-bucket", 12345, "abc123def456", "Test error")
-        
+
         assert result is False
-        
+
         # Verify marker was updated with failed status
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
@@ -797,22 +749,22 @@ class TestUpdateMarkerForRetry:
     def test_no_existing_marker_starts_at_one(self, mocker):
         """Starts retry_count at 1 when no existing marker."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         result = update_marker_for_retry("test-bucket", 12345, "abc123def456", "Test error")
-        
+
         assert result is True
-        
+
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
         assert marker["retry_count"] == 1
@@ -824,23 +776,23 @@ class TestUpdateMarkerFailed:
     def test_marks_as_permanently_failed(self, mocker):
         """Creates marker with failed status and non_retryable reason."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         update_marker_failed("test-bucket", 12345, "abc123def456", "401 Unauthorized")
-        
+
         mock_bucket.blob.assert_called_once_with("idempotency/pr-12345-abc123def456.json")
-        
+
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
-        
+
         assert marker["pr_id"] == 12345
         assert marker["commit_sha"] == "abc123def456"
         assert marker["status"] == "failed"
@@ -851,22 +803,22 @@ class TestUpdateMarkerFailed:
     def test_truncates_long_error_messages(self, mocker):
         """Truncates error messages longer than 500 chars."""
         import json
-        
+
         mock_blob = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         long_error = "x" * 1000
         update_marker_failed("test-bucket", 12345, "abc123def456", long_error)
-        
+
         uploaded_content = mock_blob.upload_from_string.call_args[0][0]
         marker = json.loads(uploaded_content)
-        
+
         assert len(marker["error"]) == 500
 
 
@@ -877,23 +829,23 @@ class TestIdempotencyKeyFormat:
         """Same PR with different commits creates different marker paths."""
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         # First commit
         check_and_claim_processing("test-bucket", 12345, "commit_a")
         first_call_path = mock_bucket.blob.call_args_list[0][0][0]
-        
+
         # Second commit (same PR)
         check_and_claim_processing("test-bucket", 12345, "commit_b")
         second_call_path = mock_bucket.blob.call_args_list[1][0][0]
-        
+
         assert first_call_path != second_call_path
         assert "pr-12345-commit_a" in first_call_path
         assert "pr-12345-commit_b" in second_call_path
@@ -902,23 +854,23 @@ class TestIdempotencyKeyFormat:
         """Same commit on different PRs creates different marker paths."""
         mock_blob = MagicMock()
         mock_blob.exists.return_value = False
-        
+
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
-        
+
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
-        
-        mocker.patch("main.storage.Client", return_value=mock_client)
-        
+
+        mocker.patch("pr_review.idempotency.storage.Client", return_value=mock_client)
+
         # First PR
         check_and_claim_processing("test-bucket", 11111, "same_commit")
         first_call_path = mock_bucket.blob.call_args_list[0][0][0]
-        
+
         # Second PR (same commit SHA - edge case)
         check_and_claim_processing("test-bucket", 22222, "same_commit")
         second_call_path = mock_bucket.blob.call_args_list[1][0][0]
-        
+
         assert first_call_path != second_call_path
         assert "pr-11111" in first_call_path
         assert "pr-22222" in second_call_path
@@ -936,9 +888,9 @@ class TestLoadWebhookConfig:
         mocker.patch.dict("os.environ", {
             "VERTEX_PROJECT": "test-project",
         })
-        
+
         config, missing = load_webhook_config()
-        
+
         assert missing == []
         assert config["VERTEX_PROJECT"] == "test-project"
         assert config["PUBSUB_TOPIC"] == "pr-review-trigger"  # default
@@ -949,17 +901,17 @@ class TestLoadWebhookConfig:
             "VERTEX_PROJECT": "test-project",
             "PUBSUB_TOPIC": "custom-topic",
         })
-        
+
         config, missing = load_webhook_config()
-        
+
         assert config["PUBSUB_TOPIC"] == "custom-topic"
 
     def test_load_webhook_config_missing_vars(self, mocker):
         """Returns missing vars list when required vars missing."""
         mocker.patch.dict("os.environ", {}, clear=True)
-        
+
         config, missing = load_webhook_config()
-        
+
         assert "VERTEX_PROJECT" in missing
 
 
@@ -980,9 +932,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.return_value = {"commit_sha": "abc123def"}
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "pr_id" in response["error"]
 
@@ -992,9 +944,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.return_value = {"pr_id": 12345}
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "commit_sha" in response["error"]
 
@@ -1004,9 +956,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.return_value = {"pr_id": "not-a-number", "commit_sha": "abc123def"}
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "integer" in response["error"]
 
@@ -1016,9 +968,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.return_value = {"pr_id": 12345, "commit_sha": "abc"}
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "7 characters" in response["error"]
 
@@ -1032,25 +984,25 @@ class TestReceiveWebhook:
             "pr_id": 12345,
             "commit_sha": "abc123def456789"
         }
-        
+
         # Mock Pub/Sub client
         mock_future = MagicMock()
         mock_future.result.return_value = "message-id-123"
-        
+
         mock_publisher = MagicMock()
         mock_publisher.topic_path.return_value = "projects/test-project/topics/test-topic"
         mock_publisher.publish.return_value = mock_future
-        
-        mocker.patch("main.pubsub_v1.PublisherClient", return_value=mock_publisher)
-        
+
+        mocker.patch("pr_review.entry_points.pubsub_v1.PublisherClient", return_value=mock_publisher)
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 202
         assert response["status"] == "queued"
         assert response["message_id"] == "message-id-123"
         assert response["pr_id"] == 12345
         assert response["commit_sha"] == "abc123de"  # truncated to 8 chars
-        
+
         # Verify Pub/Sub was called correctly
         mock_publisher.topic_path.assert_called_once_with("test-project", "test-topic")
         mock_publisher.publish.assert_called_once()
@@ -1058,7 +1010,7 @@ class TestReceiveWebhook:
     def test_pubsub_message_format(self, mock_request, mocker):
         """Verifies the Pub/Sub message contains expected fields."""
         import json
-        
+
         mocker.patch.dict("os.environ", {
             "VERTEX_PROJECT": "test-project",
         })
@@ -1066,23 +1018,23 @@ class TestReceiveWebhook:
             "pr_id": 12345,
             "commit_sha": "abc123def456789"
         }
-        
+
         mock_future = MagicMock()
         mock_future.result.return_value = "msg-123"
-        
+
         mock_publisher = MagicMock()
         mock_publisher.topic_path.return_value = "projects/test-project/topics/pr-review-trigger"
         mock_publisher.publish.return_value = mock_future
-        
-        mocker.patch("main.pubsub_v1.PublisherClient", return_value=mock_publisher)
-        
+
+        mocker.patch("pr_review.entry_points.pubsub_v1.PublisherClient", return_value=mock_publisher)
+
         receive_webhook(mock_request)
-        
+
         # Get the message bytes that were published
         publish_call = mock_publisher.publish.call_args
         message_bytes = publish_call[0][1]  # Second positional arg
         message = json.loads(message_bytes.decode("utf-8"))
-        
+
         assert message["pr_id"] == 12345
         assert message["commit_sha"] == "abc123def456789"
         assert message["source"] == "azure-devops-pipeline"
@@ -1097,24 +1049,24 @@ class TestReceiveWebhook:
             "pr_id": 12345,
             "commit_sha": "abc123def456789"
         }
-        
+
         mock_publisher = MagicMock()
         mock_publisher.topic_path.return_value = "projects/test-project/topics/test-topic"
         mock_publisher.publish.side_effect = Exception("Pub/Sub error")
-        
-        mocker.patch("main.pubsub_v1.PublisherClient", return_value=mock_publisher)
-        
+
+        mocker.patch("pr_review.entry_points.pubsub_v1.PublisherClient", return_value=mock_publisher)
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 500
         assert "Failed to queue" in response["error"]
 
     def test_server_config_error(self, mock_request, mocker):
         """Returns 500 when server config is missing."""
         mocker.patch.dict("os.environ", {}, clear=True)
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 500
         assert "configuration error" in response["error"]
 
@@ -1124,9 +1076,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.side_effect = Exception("Invalid JSON")
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "Invalid JSON" in response["error"]
 
@@ -1136,9 +1088,9 @@ class TestReceiveWebhook:
             "VERTEX_PROJECT": "test-project",
         })
         mock_request.get_json.return_value = None
-        
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 400
         assert "Empty" in response["error"]
 
@@ -1151,18 +1103,18 @@ class TestReceiveWebhook:
             "pr_id": "12345",  # String, not int
             "commit_sha": "abc123def456789"
         }
-        
+
         mock_future = MagicMock()
         mock_future.result.return_value = "msg-123"
-        
+
         mock_publisher = MagicMock()
         mock_publisher.topic_path.return_value = "projects/test-project/topics/test-topic"
         mock_publisher.publish.return_value = mock_future
-        
-        mocker.patch("main.pubsub_v1.PublisherClient", return_value=mock_publisher)
-        
+
+        mocker.patch("pr_review.entry_points.pubsub_v1.PublisherClient", return_value=mock_publisher)
+
         response, status = receive_webhook(mock_request)
-        
+
         assert status == 202
         assert response["pr_id"] == 12345  # Converted to int
 
@@ -1182,9 +1134,9 @@ class TestFilterNonCodeFiles:
             {"path": "/src/styles.css", "change_type": "edit", "source_content": "css", "target_content": "old"},
             {"path": "/docs/CHANGELOG.MD", "change_type": "add", "source_content": "# Changelog", "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 2
         assert len(filtered) == 2
         assert all(not diff["path"].lower().endswith(".md") for diff in filtered)
@@ -1198,9 +1150,9 @@ class TestFilterNonCodeFiles:
             {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
             {"path": "/scripts/setup.SH", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 2
         assert len(filtered) == 1
         assert filtered[0]["path"] == "/src/component.js"
@@ -1214,9 +1166,9 @@ class TestFilterNonCodeFiles:
             {"path": "/images/icon.svg", "change_type": "add", "source_content": None, "target_content": None},
             {"path": "/images/photo.jpeg", "change_type": "add", "source_content": None, "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 4
         assert len(filtered) == 1
         assert filtered[0]["path"] == "/src/component.js"
@@ -1230,9 +1182,9 @@ class TestFilterNonCodeFiles:
             {"path": "/images/logo.PNG", "change_type": "add", "source_content": None, "target_content": None},
             {"path": "/src/file.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 4
         assert len(filtered) == 1
         assert filtered[0]["path"] == "/src/file.js"
@@ -1243,9 +1195,9 @@ class TestFilterNonCodeFiles:
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/src/styles.css", "change_type": "add", "source_content": "css", "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 0
         assert len(filtered) == 2
         assert filtered == file_diffs
@@ -1257,9 +1209,9 @@ class TestFilterNonCodeFiles:
             {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
             {"path": "/images/logo.png", "change_type": "add", "source_content": None, "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 3
         assert len(filtered) == 0
 
@@ -1271,9 +1223,9 @@ class TestFilterNonCodeFiles:
             {"path": "/src/shell-utils.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
         ]
-        
+
         filtered, count = filter_non_code_files(file_diffs)
-        
+
         assert count == 1
         assert len(filtered) == 3
         assert any(diff["path"] == "/src/md5hash.js" for diff in filtered)
@@ -1295,7 +1247,7 @@ class TestIsExtensivePr:
             {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
             for i in range(6)  # 6 files > threshold of 5
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == True
 
     def test_is_extensive_pr_by_file_count_exact_threshold(self):
@@ -1305,7 +1257,7 @@ class TestIsExtensivePr:
             {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
             for i in range(5)  # 5 files == threshold of 5
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == True
 
     def test_is_extensive_pr_by_file_count_below_threshold(self):
@@ -1315,7 +1267,7 @@ class TestIsExtensivePr:
             {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
             for i in range(4)  # 4 files < threshold of 5
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == False
 
     def test_is_extensive_pr_by_size(self):
@@ -1332,7 +1284,7 @@ class TestIsExtensivePr:
             }
             for i in range(2)  # 2 files * 600 * 2 = 2400 chars > 1000 threshold
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == True
 
     def test_is_extensive_pr_by_size_exact_threshold(self):
@@ -1349,7 +1301,7 @@ class TestIsExtensivePr:
             }
             for i in range(2)
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == True
 
     def test_is_extensive_pr_by_size_below_threshold(self):
@@ -1365,7 +1317,7 @@ class TestIsExtensivePr:
             }
             for i in range(2)  # 2 files * (4 + 3) = 14 chars < 1000 threshold
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == False
 
     def test_is_extensive_pr_handles_none_content(self):
@@ -1375,7 +1327,7 @@ class TestIsExtensivePr:
             {"path": "/src/file.js", "change_type": "add", "source_content": None, "target_content": None},
             {"path": "/src/file2.js", "change_type": "edit", "source_content": "code", "target_content": None},
         ]
-        
+
         # Should not raise error and should return False (small size)
         assert is_extensive_pr(file_diffs, config) == False
 
@@ -1387,7 +1339,7 @@ class TestIsExtensivePr:
             {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
             for i in range(DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD + 5)
         ]
-        
+
         assert is_extensive_pr(file_diffs, config) == True
 
 
@@ -1406,19 +1358,19 @@ class TestProcessPrReviewWithFiltering:
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
             "FILTER_NON_CODE_FILES": True,
         }
-        
+
         # PR with markdown files (filtering should happen regardless of PR size)
         file_diffs = [
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
             {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
         ]
-        
-        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
-        
+
+        mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
-        
+
         # Should have filtered out 2 markdown files, leaving 1 file
         assert result.files_changed == 1
         # Verify Gemini was called (prompt built with filtered files)
@@ -1432,18 +1384,18 @@ class TestProcessPrReviewWithFiltering:
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
             "FILTER_NON_CODE_FILES": True,
         }
-        
+
         # Small PR with markdown files (should still filter)
         file_diffs = [
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
         ]
-        
-        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
-        
+
+        mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
-        
+
         # Should filter markdown file, leaving 1 file
         assert result.files_changed == 1
 
@@ -1455,19 +1407,19 @@ class TestProcessPrReviewWithFiltering:
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
             "FILTER_NON_CODE_FILES": False,  # Disabled
         }
-        
+
         # PR with markdown files but not extensive (below threshold)
         file_diffs = [
             {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
             {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
             {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
         ]
-        
-        mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** note")
-        mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
-        
+
+        mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
-        
+
         # Should include all files (filtering disabled, and PR not extensive)
         assert result.files_changed == 3
 
@@ -1479,7 +1431,7 @@ class TestProcessPrReviewWithFiltering:
             "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000,
             "FILTER_NON_CODE_FILES": True,
         }
-        
+
         # Create extensive PR with 5 files (should be limited to 3)
         file_diffs = [
             {"path": "/src/file1.js", "change_type": "edit", "source_content": "code1", "target_content": "old1"},
@@ -1488,19 +1440,18 @@ class TestProcessPrReviewWithFiltering:
             {"path": "/src/file4.js", "change_type": "edit", "source_content": "code4", "target_content": "old4"},
             {"path": "/src/file5.js", "change_type": "edit", "source_content": "code5", "target_content": "old5"},
         ]
-        
-        mock_gemini = mocker.patch("main.call_gemini", return_value="# Review\n\n**Priority:** review-recommended")
-        mock_save = mocker.patch("main.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+
+        mock_gemini = mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** review-recommended")
+        mock_save = mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mock_comment = mocker.patch.object(ado_client, "post_pr_comment")
-        
+
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
-        
+
         # Should be limited to 3 files
         assert result.files_changed == 3
-        
+
         # Verify comment was posted with partial review notice
         assert mock_comment.called
         comment_text = mock_comment.call_args[0][1]
         assert "Partial Review" in comment_text
         assert "excluded 2 additional files" in comment_text
-
