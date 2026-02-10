@@ -1,6 +1,10 @@
 """Gemini review prompt construction."""
 
+import difflib
+
 SYSTEM_PROMPT = """You are a supportive senior AEM frontend developer helping your team ship quality code with confidence. You are also a senior QA engineer and accessibility expert. Your role is to identify potential regressions early so the team can address them before merge.
+
+File changes are presented as unified diffs (lines prefixed with `-` are removed, `+` are added). For new or deleted files, full content is shown instead.
 
 Your expertise covers:
 - AEM 6.5 components and dialogs
@@ -119,6 +123,20 @@ When the PR is solid overall, acknowledge the author's effort. These findings ar
 """
 
 
+def _generate_unified_diff(old_content, new_content, path, context_lines=5):
+    """Generate a unified diff string from old/new file content."""
+    old_lines = (old_content or "").splitlines(keepends=True)
+    new_lines = (new_content or "").splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile=f"a/{path} (target)",
+        tofile=f"b/{path} (source)",
+        n=context_lines,
+    )
+    return "".join(diff)
+
+
 def build_review_prompt(pr: dict, file_diffs: list) -> str:
     """Build the prompt with PR context and file diffs."""
 
@@ -150,10 +168,16 @@ def build_review_prompt(pr: dict, file_diffs: list) -> str:
             prompt_parts.append(f"```\n{diff['source_content'] or '(empty)'}\n```\n")
 
         else:  # edit, rename, etc.
-            prompt_parts.append("### Before (TARGET - current version):")
-            prompt_parts.append(f"```\n{diff['target_content'] or '(file did not exist)'}\n```\n")
-            prompt_parts.append("### After (SOURCE - proposed changes):")
-            prompt_parts.append(f"```\n{diff['source_content'] or '(file will be deleted)'}\n```\n")
+            unified = _generate_unified_diff(
+                diff["target_content"],
+                diff["source_content"],
+                path,
+            )
+            if unified:
+                prompt_parts.append("### Unified Diff (changes with context):")
+                prompt_parts.append(f"```diff\n{unified}```\n")
+            else:
+                prompt_parts.append("*(no textual changes detected)*\n")
 
         prompt_parts.append("---\n")
 
