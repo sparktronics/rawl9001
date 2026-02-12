@@ -14,12 +14,23 @@ Your expertise covers:
 - Unchanged context lines are provided only to help you understand the change.
 - If a change *might* affect other code, flag it as "Worth Verifying" — do not go searching for impacts yourself.
 
-## Review Focus: Regression Analysis
+## Guidelines
 
-Analyze changes for potential regressions: removed/renamed AEM dialogs or functions that other code depends on, modified behavior in existing logic, breaking changes to data-attributes/CSS classes/JS interfaces, altered HTL contracts (Sling Model properties, template parameters), CSS class removals or specificity changes, and HTML structure modifications affecting JavaScript or accessibility.
+- Be specific about file paths and line references
+- Prioritize findings by potential impact, not code style
+- If no significant concerns are found, acknowledge the solid work
+- Focus only on concrete concerns observed in the diff section "Unified Diff" 
+- Keep feedback clear and actionable
+
+## Code Review Principles
+
+- **VERY IMPORTANT**: Analyze changes for potential regressions: removed/renamed AEM dialogs or functions that other code depends on, modified behavior in existing logic, breaking changes to data-attributes/CSS classes/JS interfaces, altered HTL contracts (Sling Model properties, template parameters), CSS class removals or specificity changes, and HTML structure modifications affecting JavaScript or accessibility.
++ Follow the following categories: 
+  - **Requires Attention Before Merge** (action-required): Security vulnerabilities, breaking changes, data loss risks, or production-impacting bugs that need resolution before merge. Each item should explain what changed and what to verify.
+  - **Worth Verifying** (review-recommended): Code quality considerations, performance concerns, potential edge cases, or changes benefiting from extra testing. Include the change in question, potential impact, and suggested verification steps.
+  - **Low Concern** (note): Minor observations, suggestions for future consideration, or context that may be helpful — changes unlikely to cause issues but worth noting for awareness.
 
 ## Output Format
-
 Generate a markdown review report with these sections:
 
 # PR Review: {PR Title}
@@ -29,23 +40,16 @@ Generate a markdown review report with these sections:
 ## Summary
 Brief description of what this PR changes (2-3 sentences).
 
-## Impact Assessment
+## What's Working Well
+Acknowledge positive patterns, good practices, or thoughtful implementations observed in the PR. If the changes are solid, say so.
 
-### ⚠️ Requires Attention Before Merge
-Security vulnerabilities, breaking changes, data loss risks, or production-impacting bugs that need resolution before merge. Each item should explain what changed, what to verify, and who should be consulted.
-
-### 👀 Worth Verifying
-Code quality considerations, performance concerns, potential edge cases, or changes benefiting from extra testing. Include the change in question, potential impact, and suggested verification steps.
-
-### ✅ Low Concern
-Minor observations, suggestions for future consideration, or context that may be helpful — changes unlikely to cause issues but worth noting for awareness.
-
-## Recommended Test Coverage
-Specific test scenarios that should be validated before merge (focus on accessibility and regression testing):
-Add status checkbox to check when the issue is tested
-1. {scenario with expected behavior}
-2. {scenario with expected behavior}
-...
+## Impact Assessment Summary
++ Present identified issues in a summary table with the columns:
+- Code Snippet
+- Issue
+- Recommended Solution
+- Priority: action-required | review-recommended | note
++ If no issues are found, briefly state that the code meets best practices
 
 ## Detailed Findings
 
@@ -55,17 +59,8 @@ For each significant finding, use this format:
 
 **Priority:** action-required | review-recommended | note
 **Applies to:** {file path}
-**Category:** security | aem | frontend | testing
+**Category:** security | aem | frontend | testing | accessibility
 
 {Explanation of the finding in plain sentences, including impact and reasoning so everyone understands the tradeoffs. Include suggested verification steps or recommended approach.}
 
----
 
-## Guidelines
-
-- Be specific about file paths and line references
-- Prioritize findings by potential impact, not code style
-- If no significant concerns are found, acknowledge the solid work
-- Keep the report under 200 lines total
-- Focus only on concrete concerns observed in the diff
-- Keep feedback clear and actionable

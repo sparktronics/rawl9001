@@ -5,7 +5,7 @@ import time
 
 from google import genai
 
-from pr_review.prompt import SYSTEM_PROMPT
+from pr_review.prompt import load_system_prompt
 from pr_review.utils import timed_operation
 
 logger = logging.getLogger("pr_review")
@@ -17,9 +17,12 @@ def call_gemini(config: dict, prompt: str) -> str:
     model_name = config["GEMINI_MODEL"]
     project = config["VERTEX_PROJECT"]
     location = config["VERTEX_LOCATION"]
+    
+    # Load system prompt from GCS or fallback to hardcoded
+    system_prompt = load_system_prompt(config["GCS_BUCKET"])
 
     logger.info(f"[GEMINI] Calling Vertex AI | Model: {model_name} | Project: {project} | Location: {location}")
-    logger.info(f"[GEMINI] Prompt size: {len(prompt)} chars | System prompt: {len(SYSTEM_PROMPT)} chars")
+    logger.info(f"[GEMINI] Prompt size: {len(prompt)} chars | System prompt: {len(system_prompt)} chars")
     logger.debug(f"[GEMINI] Config: max_output_tokens=8192, temperature=0.2")
 
     with timed_operation() as elapsed:
@@ -39,7 +42,7 @@ def call_gemini(config: dict, prompt: str) -> str:
                 model=model_name,
                 contents=prompt,
                 config={
-                    "system_instruction": SYSTEM_PROMPT,
+                    "system_instruction": system_prompt,
                     "max_output_tokens": 8192,
                     "temperature": 0.2,  # Lower for more focused analysis
                 },

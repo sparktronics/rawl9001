@@ -1,6 +1,18 @@
 """Gemini review prompt construction."""
 
 import difflib
+import logging
+import os
+
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
+
+from pr_review.utils import timed_operation
+
+logger = logging.getLogger("pr_review")
+
+# Default GCS path for system prompt blob
+DEFAULT_SYSTEM_PROMPT_BLOB_PATH = "prompts/system-prompt.txt"
 
 SYSTEM_PROMPT = """You are a supportive senior AEM frontend developer helping your team ship quality code with confidence. You are also a senior QA engineer and accessibility expert. Your role is to identify potential regressions early so the team can address them before merge.
 
@@ -121,6 +133,40 @@ The main objective is to provide clear impact analysis of changes on the existin
 
 When the PR is solid overall, acknowledge the author's effort. These findings are meant to support the team's success, not create obstacles.
 """
+
+
+def load_system_prompt(bucket_name: str) -> str:
+    """Load system prompt from GCS or fall back to hardcoded constant.
+    
+    Args:
+        bucket_name: GCS bucket name to load prompt from
+        
+    Returns:
+        System prompt text
+    """
+    blob_path = os.environ.get("SYSTEM_PROMPT_BLOB_PATH", DEFAULT_SYSTEM_PROMPT_BLOB_PATH)
+    
+    with timed_operation() as elapsed:
+        try:
+            # Attempt to load from GCS
+            logger.info(f"[PROMPT] Loading system prompt from GCS | Bucket: {bucket_name} | Path: {blob_path}")
+            
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            prompt_text = blob.download_as_text()
+            
+            logger.info(f"[PROMPT] Loaded from GCS | {len(prompt_text)} chars | {elapsed():.0f}ms")
+            return prompt_text
+            
+        except NotFound:
+            logger.warning(f"[PROMPT] Blob not found in GCS, using fallback | Path: {blob_path} | {elapsed():.0f}ms")
+            return SYSTEM_PROMPT
+            
+        except Exception as e:
+            logger.error(f"[PROMPT] Failed to load from GCS, using fallback | Error: {type(e).__name__}: {str(e)} | {elapsed():.0f}ms")
+            return SYSTEM_PROMPT
 
 
 def _generate_unified_diff(old_content, new_content, path, context_lines=5):
