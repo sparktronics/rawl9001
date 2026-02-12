@@ -131,7 +131,7 @@ gcloud functions deploy pr-regression-review \
   --no-allow-unauthenticated \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3-pro-preview" \
+  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3-pro-preview" \
   --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 
 # After deployment, grant invoker permission to authorized service accounts
