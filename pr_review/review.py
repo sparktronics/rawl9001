@@ -16,6 +16,7 @@ def process_pr_review(
     pr_id: int,
     pr: dict,
     file_diffs: list,
+    debug: bool = False,
 ) -> ReviewResult:
     """
     Core PR review logic shared by HTTP and Pub/Sub entry points.
@@ -33,6 +34,7 @@ def process_pr_review(
         pr_id: Pull Request ID
         pr: PR metadata dict from Azure DevOps
         file_diffs: List of file diff dicts
+        debug: If True, save prompt inputs to GCS
 
     Returns:
         ReviewResult with all review details and actions taken
@@ -54,7 +56,7 @@ def process_pr_review(
     prompt = build_review_prompt(pr, file_diffs)
     logger.info(f"[REVIEW] Prompt built: {len(prompt)} chars")
 
-    review = gemini.call_gemini(config, prompt)
+    review = gemini.call_gemini(config, prompt, debug=debug, pr_id=pr_id)
 
     # Determine severity
     logger.info("[REVIEW] Analyzing severity")
