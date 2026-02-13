@@ -36,7 +36,7 @@ def review_pr(request):
         Cloud Run before this function is invoked.
 
     Request:
-        POST with JSON body: {"pr_id": 12345}
+        POST with JSON body: {"pr_id": 12345, "debug": false}
         Header: Authorization: Bearer <google-identity-token>
 
     Response:
@@ -73,7 +73,8 @@ def review_pr(request):
                 return make_response({"error": "Missing required field: pr_id"}, 400)
 
             pr_id = int(pr_id)
-            logger.info(f"[REQUEST] Processing PR #{pr_id}")
+            debug = request_json.get("debug", False)
+            logger.info(f"[REQUEST] Processing PR #{pr_id} | Debug: {debug}")
         except (ValueError, TypeError) as e:
             logger.error(f"[REQUEST] Invalid pr_id format: {e}")
             return make_response({"error": f"Invalid pr_id: {e}"}, 400)
@@ -118,7 +119,7 @@ def review_pr(request):
 
             # Process the review using shared logic
             logger.info(f"[FLOW] Step 3/3: Processing review")
-            result = process_pr_review(config, ado, pr_id, pr, file_diffs)
+            result = process_pr_review(config, ado, pr_id, pr, file_diffs, debug=debug)
 
             logger.info(f"[COMPLETE] PR #{pr_id} review finished | Severity: {result.max_severity} | Action: {result.action_taken or 'none'} | Total time: {elapsed():.0f}ms")
             logger.info("=" * 60)
@@ -161,7 +162,8 @@ def review_pr_pubsub(cloud_event: CloudEvent) -> None:
             "pr_id": 12345,
             "commit_sha": "abc123def...",  // Optional: provided by webhook receiver
             "received_at": "2026-01-03T10:30:00Z",
-            "source": "azure-devops-pipeline"
+            "source": "azure-devops-pipeline",
+            "debug": false  // Optional: enable prompt input debugging
         }
 
     The function will:
@@ -202,10 +204,12 @@ def review_pr_pubsub(cloud_event: CloudEvent) -> None:
 
             # Extract commit_sha from message (provided by webhook receiver)
             message_commit_sha = message.get("commit_sha")
+            debug = message.get("debug", False)
+
             if message_commit_sha:
-                logger.info(f"[PUBSUB] Processing PR #{pr_id} @ {message_commit_sha[:8]} (from message)")
+                logger.info(f"[PUBSUB] Processing PR #{pr_id} @ {message_commit_sha[:8]} (from message) | Debug: {debug}")
             else:
-                logger.info(f"[PUBSUB] Processing PR #{pr_id} (commit_sha will be fetched from ADO)")
+                logger.info(f"[PUBSUB] Processing PR #{pr_id} (commit_sha will be fetched from ADO) | Debug: {debug}")
 
         except (ValueError, TypeError, json.JSONDecodeError) as e:
             logger.error(f"[PUBSUB] Failed to parse message: {e}")
@@ -267,7 +271,7 @@ def review_pr_pubsub(cloud_event: CloudEvent) -> None:
 
             # Process the review using shared logic
             logger.info(f"[FLOW] Step 4/4: Processing review")
-            result = process_pr_review(config, ado, pr_id, pr, file_diffs)
+            result = process_pr_review(config, ado, pr_id, pr, file_diffs, debug=debug)
 
             # Update idempotency marker with completion status
             update_marker_completed(bucket_name, pr_id, commit_sha, result.max_severity, result.commented)
@@ -591,7 +595,8 @@ def receive_webhook(request):
 
         {
             "pr_id": 357462,
-            "commit_sha": "abc123def456789..."
+            "commit_sha": "abc123def456789...",
+            "debug": false
         }
 
     Response (202 Accepted):
@@ -630,6 +635,7 @@ def receive_webhook(request):
         # Validate required fields
         pr_id = data.get("pr_id")
         commit_sha = data.get("commit_sha")
+        debug = data.get("debug", False)
 
         if not pr_id:
             logger.error("[PARSE] Missing pr_id in request")
@@ -650,14 +656,15 @@ def receive_webhook(request):
             logger.error(f"[PARSE] Invalid commit_sha: {commit_sha}")
             return {"error": "commit_sha must be a string of at least 7 characters"}, 400
 
-        logger.info(f"[WEBHOOK] PR #{pr_id} @ {commit_sha[:8]}")
+        logger.info(f"[WEBHOOK] PR #{pr_id} @ {commit_sha[:8]} | Debug: {debug}")
 
         # Build Pub/Sub message
         message = {
             "pr_id": pr_id,
             "commit_sha": commit_sha,
             "received_at": datetime.now(timezone.utc).isoformat(),
-            "source": "azure-devops-pipeline"
+            "source": "azure-devops-pipeline",
+            "debug": debug
         }
 
         # Publish to Pub/Sub

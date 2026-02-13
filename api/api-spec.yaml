@@ -10,6 +10,26 @@ paths:
     post:
       summary: Webhook receiver for PR review
       operationId: receiveWebhook
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - pr_id
+              - commit_sha
+            properties:
+              pr_id:
+                type: integer
+                description: Pull request ID
+              commit_sha:
+                type: string
+                description: Commit SHA
+              debug:
+                type: boolean
+                description: Enable debug mode to save prompt inputs to GCS
+                default: false
       responses:
         "202":
           description: Accepted for processing
@@ -28,6 +48,22 @@ paths:
     post:
       summary: Review Pull Request
       operationId: reviewPR
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - pr_id
+            properties:
+              pr_id:
+                type: integer
+                description: Pull request ID
+              debug:
+                type: boolean
+                description: Enable debug mode to save prompt inputs to GCS
+                default: false
       responses:
         "200":
           description: Review completed successfully

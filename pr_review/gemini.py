@@ -11,15 +11,34 @@ from pr_review.utils import timed_operation
 logger = logging.getLogger("pr_review")
 
 
-def call_gemini(config: dict, prompt: str) -> str:
-    """Send prompt to Gemini via Vertex AI and return response."""
+def call_gemini(config: dict, prompt: str, debug: bool = False, pr_id: int = None) -> str:
+    """Send prompt to Gemini via Vertex AI and return response.
+
+    Args:
+        config: Configuration dictionary
+        prompt: User prompt to send to Gemini
+        debug: If True, save prompt inputs to GCS
+        pr_id: Pull request ID (required when debug=True)
+
+    Returns:
+        Response text from Gemini
+    """
 
     model_name = config["GEMINI_MODEL"]
     project = config["VERTEX_PROJECT"]
     location = config["VERTEX_LOCATION"]
-    
+
     # Load system prompt from GCS or fallback to hardcoded
     system_prompt = load_system_prompt(config["GCS_BUCKET"])
+
+    # Save prompt inputs if debug mode is enabled
+    if debug and pr_id:
+        try:
+            from pr_review.storage import save_prompt_input
+            save_prompt_input(config["GCS_BUCKET"], pr_id, system_prompt, prompt)
+            logger.info(f"[GEMINI] Debug mode: Prompt input saved to GCS for PR #{pr_id}")
+        except Exception as e:
+            logger.warning(f"[GEMINI] Failed to save prompt input (non-blocking): {e}")
 
     logger.info(f"[GEMINI] Calling Vertex AI | Model: {model_name} | Project: {project} | Location: {location}")
     logger.info(f"[GEMINI] Prompt size: {len(prompt)} chars | System prompt: {len(system_prompt)} chars")
