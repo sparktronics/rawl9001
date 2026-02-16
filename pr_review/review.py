@@ -99,11 +99,18 @@ def process_pr_review(
         logger.info("[ACTION] Comment posted successfully")
 
         if has_blocking:
-            logger.info("[ACTION] Rejecting PR due to blocking issues")
-            user_id = ado.get_current_user_id()
-            ado.reject_pr(pr_id, user_id)
-            action_taken = "rejected"
-            logger.info(f"[ACTION] PR #{pr_id} rejected")
+            # Check if just_comment_ticket is enabled
+            just_comment = config.get("JUST_COMMENT_TICKET", False)
+
+            if just_comment:
+                logger.info("[ACTION] Skipping PR rejection - JUST_COMMENT_TICKET is enabled")
+                action_taken = "commented"
+            else:
+                logger.info("[ACTION] Rejecting PR due to blocking issues")
+                user_id = ado.get_current_user_id()
+                ado.reject_pr(pr_id, user_id)
+                action_taken = "rejected"
+                logger.info(f"[ACTION] PR #{pr_id} rejected")
         else:
             action_taken = "commented"
     else:

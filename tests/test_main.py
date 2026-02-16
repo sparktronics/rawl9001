@@ -127,6 +127,39 @@ This change breaks existing functionality."""
         # Verify PR was rejected
         ado_client.reject_pr.assert_called_once_with(12345, "user-123")
 
+    def test_process_review_blocking_with_just_comment_ticket(self, ado_client, sample_pr, sample_file_diffs, mocker):
+        """process_pr_review posts comment but does not reject when JUST_COMMENT_TICKET is enabled."""
+        config = {"GCS_BUCKET": "test-bucket", "JUST_COMMENT_TICKET": True}
+
+        # Mock Gemini to return action-required review
+        mock_review = """# PR Review
+
+### Finding: Critical regression
+**Priority:** action-required
+
+This change breaks existing functionality."""
+        mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
+        mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch.object(ado_client, "post_pr_comment")
+        mocker.patch.object(ado_client, "get_current_user_id", return_value="user-123")
+        mocker.patch.object(ado_client, "reject_pr")
+
+        result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
+
+        assert result.max_severity == "action-required"
+        assert result.has_blocking is True
+        assert result.commented is True
+        assert result.action_taken == "commented"  # Should be commented, not rejected
+
+        # Verify comment was posted
+        ado_client.post_pr_comment.assert_called_once()
+        comment_text = ado_client.post_pr_comment.call_args[0][1]
+        assert "Automated Regression Review" in comment_text
+        assert "Action required before merge" in comment_text
+
+        # Verify PR was NOT rejected (due to JUST_COMMENT_TICKET)
+        ado_client.reject_pr.assert_not_called()
+
     def test_process_review_warning_severity(self, ado_client, sample_pr, sample_file_diffs, mocker):
         """process_pr_review returns review-recommended result and posts comment but does not reject."""
         config = {"GCS_BUCKET": "test-bucket"}

@@ -46,6 +46,9 @@ def load_config() -> tuple[dict, list]:
     )
     config["FILTER_NON_CODE_FILES"] = os.environ.get("FILTER_NON_CODE_FILES", "true").lower() == "true"
 
+    # Optional: If set, only comment on PRs without rejecting them
+    config["JUST_COMMENT_TICKET"] = os.environ.get("JUST_COMMENT_TICKET", "").lower() == "true"
+
     return config, missing
 
 
