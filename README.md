@@ -7,7 +7,7 @@ A Cloud Function that fetches Pull Requests from Azure DevOps, sends them to Gem
 ## Features
 
 - Fetches PR metadata and full file contents from Azure DevOps
-- Sends both "before" and "after" versions to Gemini for comparison
+- Sends **Old Content** (target branch), **New Content** (source/PR branch), and a **Unified Diff** per file to Gemini for comparison
 - Generates a regression-focused review targeting AEM/HTL/JS/CSS
 - Stores reviews in Cloud Storage with date partitioning (`yyyy/mm/dd`)
 - **Auto-comments** on PRs with blocking or warning findings
@@ -379,6 +379,8 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 | `FILTER_NON_CODE_FILES` | No | Filter out non-code files (.md, .sh, images) from review (default: `true`) |
 | `EXTENSIVE_PR_FILE_THRESHOLD` | No | File count threshold for extensive PR detection (default: `20`) |
 | `EXTENSIVE_PR_SIZE_THRESHOLD` | No | Character count threshold for extensive PR detection (default: `500000`) |
+| `JUST_COMMENT_TICKET` | No | Only post comments without rejecting PRs, even when blocking issues are found (default: `false`) |
+| `MAX_FILE_CONTENT_CHARS` | No | Max characters of full file content (old/new) per file in the prompt; larger files are truncated (default: `50000`) |
 
 ## File Filtering
 
@@ -411,6 +413,8 @@ When files are limited, a notice is added to the PR comment indicating that a pa
 ## System Prompt Configuration
 
 The system prompt can be stored externally in GCS, allowing you to update the review instructions without redeploying the function.
+
+Each file in the review prompt is sent with three sections: **Old Content** (target branch), **New Content** (source/PR branch), and **Unified Diff**. Full file content may be truncated per file using `MAX_FILE_CONTENT_CHARS` (see environment variables).
 
 ### Initial Upload
 
