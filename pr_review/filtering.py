@@ -53,14 +53,14 @@ def filter_non_code_files(file_diffs: list) -> tuple[list, int]:
 
 
 def is_extensive_pr(file_diffs: list, config: dict) -> bool:
-    """Determine if a PR is extensive based on file count or total size.
+    """Determine if a PR is extensive based on file count or total diff size.
 
     A PR is considered extensive if:
     - File count exceeds EXTENSIVE_PR_FILE_THRESHOLD, OR
-    - Total content size (sum of all file content lengths) exceeds EXTENSIVE_PR_SIZE_THRESHOLD
+    - Total diff size (sum of all file diff lengths) exceeds EXTENSIVE_PR_SIZE_THRESHOLD
 
     Args:
-        file_diffs: List of file diff dicts with 'source_content' and 'target_content' keys
+        file_diffs: List of file diff dicts with 'diff' key (unified diff text)
         config: Configuration dictionary with threshold values
 
     Returns:
@@ -69,21 +69,13 @@ def is_extensive_pr(file_diffs: list, config: dict) -> bool:
     file_count = len(file_diffs)
     file_threshold = config.get("EXTENSIVE_PR_FILE_THRESHOLD", DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD)
 
-    # Check file count threshold
     if file_count >= file_threshold:
         logger.info(f"[EXTENSIVE] PR detected as extensive: {file_count} files (threshold: {file_threshold})")
         return True
 
-    # Calculate total content size
-    total_size = 0
-    for diff in file_diffs:
-        source_content = diff.get("source_content") or ""
-        target_content = diff.get("target_content") or ""
-        total_size += len(source_content) + len(target_content)
-
+    total_size = sum(len(entry.get("diff") or "") for entry in file_diffs)
     size_threshold = config.get("EXTENSIVE_PR_SIZE_THRESHOLD", DEFAULT_EXTENSIVE_PR_SIZE_THRESHOLD)
 
-    # Check size threshold
     if total_size >= size_threshold:
         logger.info(f"[EXTENSIVE] PR detected as extensive: {total_size} chars (threshold: {size_threshold})")
         return True

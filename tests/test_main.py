@@ -340,9 +340,9 @@ class TestAzureDevOpsClientMethods:
         assert result == "file content here"
 
     def test_get_pr_diff(self, ado_client, sample_pr, mocker):
-        """get_pr_diff aggregates file contents from source and target."""
+        """get_pr_diff returns unified diff per file from diffs/commits + file content."""
         mocker.patch.object(ado_client, "get_pull_request", return_value=sample_pr)
-        mocker.patch.object(ado_client, "get_pr_changes", return_value=[
+        mocker.patch.object(ado_client, "_get_diffs_commits", return_value=[
             {
                 "item": {"path": "/src/test.js", "isFolder": False},
                 "changeType": "edit",
@@ -351,7 +351,7 @@ class TestAzureDevOpsClientMethods:
         mocker.patch.object(
             ado_client,
             "get_file_content",
-            side_effect=["new content", "old content"]
+            side_effect=["new content", "old content"],
         )
 
         result = ado_client.get_pr_diff(12345)
@@ -359,8 +359,9 @@ class TestAzureDevOpsClientMethods:
         assert len(result) == 1
         assert result[0]["path"] == "/src/test.js"
         assert result[0]["change_type"] == "edit"
-        assert result[0]["source_content"] == "new content"
-        assert result[0]["target_content"] == "old content"
+        assert "diff" in result[0]
+        assert "-old content" in result[0]["diff"] or "old content" in result[0]["diff"]
+        assert "+new content" in result[0]["diff"] or "new content" in result[0]["diff"]
 
 
 # =============================================================================
@@ -468,7 +469,7 @@ class TestBuildReviewPrompt:
     """Tests for build_review_prompt function."""
 
     def test_build_review_prompt(self, sample_pr, sample_file_diffs):
-        """build_review_prompt constructs prompt with PR context and diffs."""
+        """build_review_prompt constructs prompt with PR context and unified diffs only."""
         prompt = build_review_prompt(sample_pr, sample_file_diffs)
 
         # Check PR metadata is included
@@ -478,18 +479,20 @@ class TestBuildReviewPrompt:
         assert "feature/new-feature" in prompt
         assert "main" in prompt
 
-        # Check file paths are included
+        # Check file paths and change types
         assert "/src/component.js" in prompt
         assert "/src/styles.css" in prompt
-
-        # Check change types are included
         assert "edit" in prompt
         assert "add" in prompt
 
-        # Check file contents are included
-        assert "function newCode()" in prompt
-        assert "function oldCode()" in prompt
+        # Prompt is diff-only: no Old/New Content sections
+        assert "Old Content" not in prompt
+        assert "New Content" not in prompt
+        assert "Unified Diff" in prompt
+
+        # Diff content is included
         assert ".new-class" in prompt
+        assert "component.js" in prompt
 
     def test_build_review_prompt_with_description(self, sample_pr, sample_file_diffs):
         """build_review_prompt includes PR description."""
@@ -1162,10 +1165,10 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_removes_md_files(self):
         """filter_non_code_files removes .md files from the list."""
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
-            {"path": "/src/styles.css", "change_type": "edit", "source_content": "css", "target_content": "old"},
-            {"path": "/docs/CHANGELOG.MD", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
+            {"path": "/src/styles.css", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/CHANGELOG.MD", "change_type": "add", "diff": "dummy"},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1179,9 +1182,9 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_removes_sh_files(self):
         """filter_non_code_files removes .sh files from the list."""
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
-            {"path": "/scripts/setup.SH", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/scripts/deploy.sh", "change_type": "add", "diff": "dummy"},
+            {"path": "/scripts/setup.SH", "change_type": "add", "diff": "dummy"},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1193,11 +1196,11 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_removes_image_files(self):
         """filter_non_code_files removes image files from the list."""
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/images/logo.png", "change_type": "add", "source_content": None, "target_content": None},
-            {"path": "/images/banner.jpg", "change_type": "add", "source_content": None, "target_content": None},
-            {"path": "/images/icon.svg", "change_type": "add", "source_content": None, "target_content": None},
-            {"path": "/images/photo.jpeg", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/images/logo.png", "change_type": "add", "diff": ""},
+            {"path": "/images/banner.jpg", "change_type": "add", "diff": ""},
+            {"path": "/images/icon.svg", "change_type": "add", "diff": ""},
+            {"path": "/images/photo.jpeg", "change_type": "add", "diff": ""},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1209,11 +1212,11 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_case_insensitive(self):
         """filter_non_code_files handles case-insensitive extensions."""
         file_diffs = [
-            {"path": "/docs/readme.md", "change_type": "add", "source_content": "content", "target_content": None},
-            {"path": "/docs/README.MD", "change_type": "add", "source_content": "content", "target_content": None},
-            {"path": "/scripts/deploy.SH", "change_type": "add", "source_content": "content", "target_content": None},
-            {"path": "/images/logo.PNG", "change_type": "add", "source_content": None, "target_content": None},
-            {"path": "/src/file.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
+            {"path": "/docs/readme.md", "change_type": "add", "diff": "dummy"},
+            {"path": "/docs/README.MD", "change_type": "add", "diff": "dummy"},
+            {"path": "/scripts/deploy.SH", "change_type": "add", "diff": "dummy"},
+            {"path": "/images/logo.PNG", "change_type": "add", "diff": ""},
+            {"path": "/src/file.js", "change_type": "edit", "diff": "dummy"},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1225,8 +1228,8 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_no_filtered_files(self):
         """filter_non_code_files returns all files when no filtered files present."""
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/src/styles.css", "change_type": "add", "source_content": "css", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/src/styles.css", "change_type": "add", "diff": "dummy"},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1238,9 +1241,9 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_only_filtered_files(self):
         """filter_non_code_files returns empty list when all files are filtered."""
         file_diffs = [
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
-            {"path": "/scripts/deploy.sh", "change_type": "add", "source_content": "#!/bin/bash", "target_content": None},
-            {"path": "/images/logo.png", "change_type": "add", "source_content": None, "target_content": None},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
+            {"path": "/scripts/deploy.sh", "change_type": "add", "diff": "dummy"},
+            {"path": "/images/logo.png", "change_type": "add", "diff": ""},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1251,10 +1254,10 @@ class TestFilterNonCodeFiles:
     def test_filter_non_code_files_path_with_extension_in_name(self):
         """filter_non_code_files does not filter files with extension in path but not as file extension."""
         file_diffs = [
-            {"path": "/src/md5hash.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/src/markdown-parser.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/src/shell-utils.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/src/md5hash.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/src/markdown-parser.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/src/shell-utils.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
         ]
 
         filtered, count = filter_non_code_files(file_diffs)
@@ -1277,7 +1280,7 @@ class TestIsExtensivePr:
         """is_extensive_pr returns True when file count exceeds threshold."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
         file_diffs = [
-            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "dummy"}
             for i in range(6)  # 6 files > threshold of 5
         ]
 
@@ -1287,7 +1290,7 @@ class TestIsExtensivePr:
         """is_extensive_pr returns True when file count equals threshold."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
         file_diffs = [
-            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "dummy"}
             for i in range(5)  # 5 files == threshold of 5
         ]
 
@@ -1297,79 +1300,58 @@ class TestIsExtensivePr:
         """is_extensive_pr returns False when file count is below threshold."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 5, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000000}
         file_diffs = [
-            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "dummy"}
             for i in range(4)  # 4 files < threshold of 5
         ]
 
         assert is_extensive_pr(file_diffs, config) == False
 
     def test_is_extensive_pr_by_size(self):
-        """is_extensive_pr returns True when total size exceeds threshold."""
+        """is_extensive_pr returns True when total diff size exceeds threshold."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
-        # Create files with content that exceeds size threshold
-        large_content = "x" * 600  # 600 chars per file
+        # 2 files * 600 chars diff = 1200 > 1000
         file_diffs = [
-            {
-                "path": f"/src/file{i}.js",
-                "change_type": "edit",
-                "source_content": large_content,
-                "target_content": large_content
-            }
-            for i in range(2)  # 2 files * 600 * 2 = 2400 chars > 1000 threshold
-        ]
-
-        assert is_extensive_pr(file_diffs, config) == True
-
-    def test_is_extensive_pr_by_size_exact_threshold(self):
-        """is_extensive_pr returns True when total size equals threshold."""
-        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
-        # Create files with content that equals size threshold
-        content = "x" * 250  # 250 chars per file, 2 files * 250 * 2 = 1000 chars
-        file_diffs = [
-            {
-                "path": f"/src/file{i}.js",
-                "change_type": "edit",
-                "source_content": content,
-                "target_content": content
-            }
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "x" * 600}
             for i in range(2)
         ]
 
         assert is_extensive_pr(file_diffs, config) == True
 
-    def test_is_extensive_pr_by_size_below_threshold(self):
-        """is_extensive_pr returns False when total size is below threshold."""
+    def test_is_extensive_pr_by_size_exact_threshold(self):
+        """is_extensive_pr returns True when total diff size equals threshold."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
-        # Create files with small content
         file_diffs = [
-            {
-                "path": f"/src/file{i}.js",
-                "change_type": "edit",
-                "source_content": "code",
-                "target_content": "old"
-            }
-            for i in range(2)  # 2 files * (4 + 3) = 14 chars < 1000 threshold
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "x" * 500}
+            for i in range(2)  # 1000 chars total
+        ]
+
+        assert is_extensive_pr(file_diffs, config) == True
+
+    def test_is_extensive_pr_by_size_below_threshold(self):
+        """is_extensive_pr returns False when total diff size is below threshold."""
+        config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
+        file_diffs = [
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "short"}
+            for i in range(2)
         ]
 
         assert is_extensive_pr(file_diffs, config) == False
 
     def test_is_extensive_pr_handles_none_content(self):
-        """is_extensive_pr handles None content gracefully."""
+        """is_extensive_pr handles missing/empty diff gracefully."""
         config = {"EXTENSIVE_PR_FILE_THRESHOLD": 100, "EXTENSIVE_PR_SIZE_THRESHOLD": 1000}
         file_diffs = [
-            {"path": "/src/file.js", "change_type": "add", "source_content": None, "target_content": None},
-            {"path": "/src/file2.js", "change_type": "edit", "source_content": "code", "target_content": None},
+            {"path": "/src/file.js", "change_type": "add", "diff": ""},
+            {"path": "/src/file2.js", "change_type": "edit", "diff": "code"},
         ]
 
-        # Should not raise error and should return False (small size)
         assert is_extensive_pr(file_diffs, config) == False
 
     def test_is_extensive_pr_default_thresholds(self):
         """is_extensive_pr uses default thresholds when not in config."""
-        config = {}  # Empty config should use defaults
-        # Default file threshold is DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD, so threshold+5 files should trigger
+        config = {}
         file_diffs = [
-            {"path": f"/src/file{i}.js", "change_type": "edit", "source_content": "code", "target_content": "old"}
+            {"path": f"/src/file{i}.js", "change_type": "edit", "diff": "dummy"}
             for i in range(DEFAULT_EXTENSIVE_PR_FILE_THRESHOLD + 5)
         ]
 
@@ -1394,9 +1376,9 @@ class TestProcessPrReviewWithFiltering:
 
         # PR with markdown files (filtering should happen regardless of PR size)
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
-            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
+            {"path": "/docs/CHANGELOG.md", "change_type": "add", "diff": "dummy"},
         ]
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
@@ -1420,8 +1402,8 @@ class TestProcessPrReviewWithFiltering:
 
         # Small PR with markdown files (should still filter)
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
         ]
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
@@ -1443,9 +1425,9 @@ class TestProcessPrReviewWithFiltering:
 
         # PR with markdown files but not extensive (below threshold)
         file_diffs = [
-            {"path": "/src/component.js", "change_type": "edit", "source_content": "code", "target_content": "old"},
-            {"path": "/docs/README.md", "change_type": "add", "source_content": "# Docs", "target_content": None},
-            {"path": "/docs/CHANGELOG.md", "change_type": "add", "source_content": "# Changelog", "target_content": None},
+            {"path": "/src/component.js", "change_type": "edit", "diff": "dummy"},
+            {"path": "/docs/README.md", "change_type": "add", "diff": "dummy"},
+            {"path": "/docs/CHANGELOG.md", "change_type": "add", "diff": "dummy"},
         ]
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
@@ -1467,11 +1449,11 @@ class TestProcessPrReviewWithFiltering:
 
         # Create extensive PR with 5 files (should be limited to 3)
         file_diffs = [
-            {"path": "/src/file1.js", "change_type": "edit", "source_content": "code1", "target_content": "old1"},
-            {"path": "/src/file2.js", "change_type": "edit", "source_content": "code2", "target_content": "old2"},
-            {"path": "/src/file3.js", "change_type": "edit", "source_content": "code3", "target_content": "old3"},
-            {"path": "/src/file4.js", "change_type": "edit", "source_content": "code4", "target_content": "old4"},
-            {"path": "/src/file5.js", "change_type": "edit", "source_content": "code5", "target_content": "old5"},
+            {"path": "/src/file1.js", "change_type": "edit", "diff": "dummy1"},
+            {"path": "/src/file2.js", "change_type": "edit", "diff": "dummy2"},
+            {"path": "/src/file3.js", "change_type": "edit", "diff": "dummy3"},
+            {"path": "/src/file4.js", "change_type": "edit", "diff": "dummy4"},
+            {"path": "/src/file5.js", "change_type": "edit", "diff": "dummy5"},
         ]
 
         mock_gemini = mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** review-recommended")

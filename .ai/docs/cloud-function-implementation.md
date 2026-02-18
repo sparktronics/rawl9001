@@ -154,12 +154,13 @@ X-API-Key: <api-key>
 | Action | Method | Endpoint |
 |--------|--------|----------|
 | Get PR | GET | `/git/repositories/{repo}/pullrequests/{id}` |
-| Get iterations | GET | `/git/repositories/{repo}/pullrequests/{id}/iterations` |
-| Get changes | GET | `/git/repositories/{repo}/pullrequests/{id}/iterations/{iter}/changes` |
+| Get diffs (change list) | GET | `/git/repositories/{repo}/diffs/commits?baseVersion=...&targetVersion=...` |
 | Get file | GET | `/git/repositories/{repo}/items?path=...` |
 | Post comment | POST | `/git/repositories/{repo}/pullrequests/{id}/threads` |
 | Reject PR | PUT | `/git/repositories/{repo}/pullrequests/{id}/reviewers/{userId}` |
 | Get current user | GET | `/_apis/connectionData` |
+
+The **diffs/commits** endpoint returns the list of changed files between two commits; the actual unified diff per file is generated client-side from file content at each commit. See [diff-approach.md](diff-approach.md).
 
 ---
 

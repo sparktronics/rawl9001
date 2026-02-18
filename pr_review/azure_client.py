@@ -1,5 +1,6 @@
 """Azure DevOps REST API client."""
 
+import difflib
 import logging
 import time
 
@@ -8,6 +9,9 @@ import requests
 from pr_review.utils import timed_operation
 
 logger = logging.getLogger("pr_review")
+
+# Context lines around each hunk in generated unified diff (git-style)
+DEFAULT_DIFF_CONTEXT_LINES = 5
 
 
 class AzureDevOpsClient:
@@ -115,12 +119,47 @@ class AzureDevOpsClient:
                 logger.debug(f"[ADO FILE] {path} | Not found (status {e.response.status_code}) | {elapsed():.0f}ms")
                 return None  # File might not exist in this version
 
+    def _get_diffs_commits(self, base_commit: str, target_commit: str) -> list:
+        """Get list of changes between two commits from Azure DevOps diffs/commits API."""
+        result = self._get(
+            f"/git/repositories/{self.repo}/diffs/commits",
+            params={
+                "baseVersion": base_commit,
+                "baseVersionType": "commit",
+                "targetVersion": target_commit,
+                "targetVersionType": "commit",
+            },
+        )
+        return result.get("changes", [])
+
+    @staticmethod
+    def _generate_unified_diff(
+        old_content: str | None,
+        new_content: str | None,
+        path: str,
+        context_lines: int = DEFAULT_DIFF_CONTEXT_LINES,
+    ) -> str:
+        """Generate a unified diff string from old/new file content (git-style)."""
+        old_lines = (old_content or "").splitlines(keepends=True)
+        new_lines = (new_content or "").splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=f"a/{path} (target)",
+            tofile=f"b/{path} (source)",
+            n=context_lines,
+        )
+        return "".join(diff)
+
     def get_pr_diff(self, pr_id: int) -> list:
         """
-        Get full diff for a PR with file contents from both source and target.
-        Returns list of dicts with path, change_type, source_content, target_content.
+        Get PR diff in git-based form: unified diff per file.
+
+        Uses Azure DevOps diffs/commits API for the change list, then fetches
+        file content at source and target commits and generates a unified diff
+        per file. Returns list of dicts with path, change_type, and diff.
         """
-        logger.info(f"[ADO] Fetching full diff for PR #{pr_id}")
+        logger.info(f"[ADO] Fetching diff for PR #{pr_id}")
 
         with timed_operation() as elapsed:
             pr = self.get_pull_request(pr_id)
@@ -128,35 +167,37 @@ class AzureDevOpsClient:
             target_commit = pr["lastMergeTargetCommit"]["commitId"]
             logger.info(f"[ADO] PR commits: source={source_commit[:8]} target={target_commit[:8]}")
 
-            changes = self.get_pr_changes(pr_id)
+            changes = self._get_diffs_commits(target_commit, source_commit)
             logger.info(f"[ADO] Found {len(changes)} changed items in PR")
 
             file_diffs = []
-            files_processed = 0
             for change in changes:
                 item = change.get("item", {})
                 path = item.get("path", "")
-                change_type = change.get("changeType", "unknown")
+                change_type = (change.get("changeType") or "unknown").lower()
 
-                # Skip folders
                 if item.get("isFolder"):
                     logger.debug(f"[ADO] Skipping folder: {path}")
                     continue
 
-                # Get content from both versions
-                source_content = self.get_file_content(path, source_commit)
                 target_content = self.get_file_content(path, target_commit)
+                source_content = self.get_file_content(path, source_commit)
+
+                diff_text = self._generate_unified_diff(
+                    target_content, source_content, path, DEFAULT_DIFF_CONTEXT_LINES
+                )
+                if not diff_text.strip() and (source_content or target_content):
+                    diff_text = "(binary or no textual diff)\n"
+                elif not diff_text.strip():
+                    diff_text = "(no diff)\n"
 
                 file_diffs.append({
                     "path": path,
                     "change_type": change_type,
-                    "source_content": source_content,  # New version (PR branch)
-                    "target_content": target_content,  # Old version (target branch)
+                    "diff": diff_text,
                 })
-                files_processed += 1
 
-            logger.info(f"[ADO] Diff complete: {files_processed} files | {elapsed():.0f}ms total")
-
+            logger.info(f"[ADO] Diff complete: {len(file_diffs)} files | {elapsed():.0f}ms total")
             return file_diffs
 
     def post_pr_comment(self, pr_id: int, content: str) -> dict:
