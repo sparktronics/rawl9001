@@ -95,7 +95,7 @@ For each significant finding, use this format:
 - Focus on what could break in production, not cosmetic issues
 - If no significant risks found, say so clearly
 - Keep the report under 200 lines total
-- Do not invent issues - only report actual concerns from the diff
+- Do not invent issues - only report actual concerns from the unified diff (each file is shown as a git-style diff only)
 - Be succinct and to the point. Don't be verbose.
 
 ## VERY IMPORTANT - Severity Guidelines:

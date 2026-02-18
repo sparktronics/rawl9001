@@ -1,6 +1,5 @@
 """Gemini review prompt construction."""
 
-import difflib
 import logging
 import os
 
@@ -14,13 +13,13 @@ logger = logging.getLogger("pr_review")
 # Default GCS path for system prompt blob
 DEFAULT_SYSTEM_PROMPT_BLOB_PATH = "prompts/system-prompt.txt"
 
-# Maximum characters of full file content to include in prompt (per file, per side).
-# Override via MAX_FILE_CONTENT_CHARS environment variable.
-DEFAULT_MAX_FILE_CONTENT_CHARS = 50_000
+# Maximum characters of unified diff to include per file (truncate if larger).
+# Override via MAX_DIFF_CHARS environment variable.
+DEFAULT_MAX_DIFF_CHARS = 50_000
 
 SYSTEM_PROMPT = """You are a supportive senior AEM frontend developer helping your team ship quality code with confidence. You are also a senior QA engineer and accessibility expert. Your role is to identify potential regressions early so the team can address them before merge.
 
-Each file change includes three sections: **Old Content** (target branch version), **New Content** (source/PR branch version), and a **Unified Diff** highlighting the changes and to help identify the responsibility for who is making the change. For new files, old content is not available. For deleted files, new content is not available. Content may be truncated for large files.
+Each file change is presented as a **Unified Diff** (git-style): only the changed lines and a few lines of context. Lines starting with `-` are from the target branch; lines starting with `+` are from the source/PR branch. For new files, the diff shows only added lines. For deleted files, only removed lines. Large diffs may be truncated.
 
 Your expertise covers:
 - AEM 6.5 components and dialogs
@@ -173,49 +172,26 @@ def load_system_prompt(bucket_name: str) -> str:
             return SYSTEM_PROMPT
 
 
-def _get_max_content_chars() -> int:
-    """Return max chars for full file content from env or default."""
-    val = os.environ.get("MAX_FILE_CONTENT_CHARS")
-    return int(val) if val else DEFAULT_MAX_FILE_CONTENT_CHARS
+def _get_max_diff_chars() -> int:
+    """Return max chars for a single file's diff from env or default."""
+    val = os.environ.get("MAX_DIFF_CHARS")
+    return int(val) if val else DEFAULT_MAX_DIFF_CHARS
 
 
-def _truncate_content(content: str, max_chars: int) -> str:
-    """Truncate content with a note if it exceeds max_chars.
-
-    Args:
-        content: Raw file content (may be None).
-        max_chars: Maximum characters to keep.
-
-    Returns:
-        Original content, truncated content with notice, or "(empty)".
-    """
-    if not content:
-        return "(empty)"
-    if len(content) <= max_chars:
-        return content
+def _truncate_diff(diff_text: str, max_chars: int) -> str:
+    """Truncate diff with a note if it exceeds max_chars."""
+    if not diff_text:
+        return "(empty diff)"
+    if len(diff_text) <= max_chars:
+        return diff_text
     return (
-        content[:max_chars]
-        + f"\n\n... [TRUNCATED — showing first {max_chars} of {len(content)} chars]"
+        diff_text[:max_chars]
+        + f"\n\n... [TRUNCATED — showing first {max_chars} of {len(diff_text)} chars]"
     )
-
-
-def _generate_unified_diff(old_content, new_content, path, context_lines=5):
-    """Generate a unified diff string from old/new file content."""
-    old_lines = (old_content or "").splitlines(keepends=True)
-    new_lines = (new_content or "").splitlines(keepends=True)
-    diff = difflib.unified_diff(
-        old_lines,
-        new_lines,
-        fromfile=f"a/{path} (target)",
-        tofile=f"b/{path} (source)",
-        n=context_lines,
-    )
-    return "".join(diff)
 
 
 def build_review_prompt(pr: dict, file_diffs: list) -> str:
-    """Build the prompt with PR context and file diffs."""
-
+    """Build the prompt with PR context and unified diffs only (no full file content)."""
     prompt_parts = [
         f"# Pull Request to Review\n",
         f"**Title:** {pr.get('title', 'Untitled')}",
@@ -225,51 +201,21 @@ def build_review_prompt(pr: dict, file_diffs: list) -> str:
         f"**Source Branch:** {pr.get('sourceRefName', '').replace('refs/heads/', '')}",
         f"**Target Branch:** {pr.get('targetRefName', '').replace('refs/heads/', '')}\n",
         "---\n",
-        "# File Changes\n",
+        "# File Changes (Unified Diff)\n",
     ]
 
-    max_chars = _get_max_content_chars()
+    max_chars = _get_max_diff_chars()
 
-    for diff in file_diffs:
-        path = diff["path"]
-        change_type = diff["change_type"]
-        old_content = diff.get("target_content")
-        new_content = diff.get("source_content")
+    for entry in file_diffs:
+        path = entry["path"]
+        change_type = entry["change_type"]
+        diff_text = entry.get("diff") or "(no diff)"
 
         prompt_parts.append(f"## {path}")
         prompt_parts.append(f"**Change Type:** {change_type}\n")
-
-        # -- Old Content (Target Branch) --
-        if change_type in ("add",):
-            prompt_parts.append("### Old Content (Target Branch):")
-            prompt_parts.append("*(new file — no previous version)*\n")
-        else:
-            prompt_parts.append("### Old Content (Target Branch):")
-            prompt_parts.append(f"```\n{_truncate_content(old_content, max_chars)}\n```\n")
-
-        # -- New Content (Source Branch) --
-        if change_type in ("delete", "delete, sourceRename"):
-            prompt_parts.append("### New Content (Source Branch):")
-            prompt_parts.append("*(file deleted)*\n")
-        else:
-            prompt_parts.append("### New Content (Source Branch):")
-            prompt_parts.append(f"```\n{_truncate_content(new_content, max_chars)}\n```\n")
-
-        # -- Unified Diff --
-        if change_type in ("add", "delete", "delete, sourceRename"):
-            prompt_parts.append("### Unified Diff:")
-            prompt_parts.append("*(not applicable for pure add/delete)*\n")
-        else:
-            unified = _generate_unified_diff(old_content, new_content, path)
-            if unified:
-                prompt_parts.append("### Unified Diff:")
-                prompt_parts.append(f"```diff\n{unified}```\n")
-            else:
-                prompt_parts.append("### Unified Diff:")
-                prompt_parts.append("*(no textual changes detected)*\n")
-
+        prompt_parts.append("### Unified Diff")
+        prompt_parts.append(f"```diff\n{_truncate_diff(diff_text, max_chars)}\n```\n")
         prompt_parts.append("---\n")
 
     prompt_parts.append("\nPlease provide your regression-focused review.")
-
     return "\n".join(prompt_parts)

@@ -33,18 +33,16 @@ def sample_pr():
 
 @pytest.fixture
 def sample_file_diffs():
-    """Sample file diffs for prompt building."""
+    """Sample file diffs for prompt building (unified diff only)."""
     return [
         {
             "path": "/src/component.js",
             "change_type": "edit",
-            "source_content": "function newCode() { return true; }",
-            "target_content": "function oldCode() { return false; }",
+            "diff": "--- a/src/component.js (target)\n+++ b/src/component.js (source)\n@@ -1,1 +1,1 @@\n-function oldCode() { return false; }\n+function newCode() { return true; }\n",
         },
         {
             "path": "/src/styles.css",
             "change_type": "add",
-            "source_content": ".new-class { color: red; }",
-            "target_content": None,
+            "diff": "--- /dev/null\n+++ b/src/styles.css\n@@ -0,0 +1 @@\n+.new-class { color: red; }\n",
         },
     ]
