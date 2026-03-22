@@ -69,6 +69,11 @@ def process_pr_review(
     logger.info("[REVIEW] Saving to Cloud Storage")
     storage_path = storage.save_to_storage(config["GCS_BUCKET"], pr_id, review)
 
+    # Status check config (used to enforce blocking via Azure DevOps branch policy)
+    status_context = config.get("STATUS_CONTEXT_NAME", "rawl-review/ai-review")
+    status_genre = config.get("STATUS_GENRE", "rawl-review")
+    just_comment = config.get("JUST_COMMENT_TICKET", False)
+
     # Take action based on severity
     commented = False
     action_taken = None
@@ -94,27 +99,49 @@ def process_pr_review(
 
         comment_header += f"📁 Full review saved to: `{storage_path}`\n\n---\n\n"
 
-        ado.post_pr_comment(pr_id, comment_header + review)
+        post_comment_response = ado.post_pr_comment(pr_id, comment_header + review)
+        logger.info(f"[ACTION] ADO response: {post_comment_response}")
         commented = True
         logger.info("[ACTION] Comment posted successfully")
 
         if has_blocking:
-            # Check if just_comment_ticket is enabled
-            just_comment = config.get("JUST_COMMENT_TICKET", False)
-
             if just_comment:
-                logger.info("[ACTION] Skipping PR rejection - JUST_COMMENT_TICKET is enabled")
+                logger.info("[ACTION] Skipping PR status check - JUST_COMMENT_TICKET is enabled")
                 action_taken = "commented"
             else:
-                logger.info("[ACTION] Rejecting PR due to blocking issues")
-                user_id = ado.get_current_user_id()
-                ado.reject_pr(pr_id, user_id)
-                action_taken = "rejected"
-                logger.info(f"[ACTION] PR #{pr_id} rejected")
+                logger.info("[ACTION] Posting failed status check to PR due to blocking issues")
+                response_ado_status = ado.post_pr_status(
+                    pr_id,
+                    state="failed",
+                    description="AI review found blocking regression risk. Tech leads may override via branch policy bypass.",
+                    context_name=status_context,
+                    genre=status_genre,
+                    target_url=storage_path,
+                )
+                logger.info(f"[ACTION] ADO response: {response_ado_status}")
+                action_taken = "status:failed"
+                logger.info(f"[ACTION] PR #{pr_id} status set to failed")
         else:
+            # Post succeeded so branch policy is satisfied for non-blocking outcomes
+            ado.post_pr_status(
+                pr_id,
+                state="succeeded",
+                description="AI review passed — review recommended but not blocking.",
+                context_name=status_context,
+                genre=status_genre,
+                target_url=storage_path,
+            )
             action_taken = "commented"
     else:
-        logger.info("[ACTION] No issues found - no action taken on PR")
+        logger.info("[ACTION] No issues found — posting succeeded status")
+        ado.post_pr_status(
+            pr_id,
+            state="succeeded",
+            description="AI review passed — no issues found.",
+            context_name=status_context,
+            genre=status_genre,
+            target_url=storage_path,
+        )
 
     logger.info(f"[REVIEW] Complete | Severity: {max_severity} | Action: {action_taken or 'none'}")
 

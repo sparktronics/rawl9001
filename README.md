@@ -131,7 +131,7 @@ gcloud functions deploy pr-regression-review \
   --no-allow-unauthenticated \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3-pro-preview" \
+  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3.1-pro-preview,JUST_COMMENT_TICKET=True" \
   --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 
 # After deployment, grant invoker permission to authorized service accounts
@@ -174,7 +174,7 @@ gcloud functions deploy pr-review-webhook \
   --no-allow-unauthenticated \
   --memory=256MB \
   --timeout=30s \
-  --set-env-vars="PUBSUB_TOPIC=pr-review-trigger"
+  --set-env-vars="PUBSUB_TOPIC=pr-review-trigger,GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm"
 
 # After deployment, grant invoker permission
 gcloud functions add-iam-policy-binding pr-review-webhook \
@@ -379,6 +379,9 @@ curl -X POST https://REGION-PROJECT_ID.cloudfunctions.net/pr-regression-review \
 | `FILTER_NON_CODE_FILES` | No | Filter out non-code files (.md, .sh, images) from review (default: `true`) |
 | `EXTENSIVE_PR_FILE_THRESHOLD` | No | File count threshold for extensive PR detection (default: `20`) |
 | `EXTENSIVE_PR_SIZE_THRESHOLD` | No | Character count threshold for extensive PR detection (default: `500000`) |
+| `JUST_COMMENT_TICKET` | No | If `true`, only comments on blocking PRs without posting a failed status (default: `false`) |
+| `STATUS_CONTEXT_NAME` | No | Status check name shown in the Azure DevOps PR Checks tab — must match the Status policy config (default: `rawl-review/ai-review`) |
+| `STATUS_GENRE` | No | Grouping label for the status check (default: `rawl-review`) |
 
 ## File Filtering
 
@@ -503,7 +506,7 @@ export VERTEX_LOCATION="us-central1"
 
 ```bash
 # Run with Python module execution (most reliable)
-python3 -m functions_framework --target=review_pr --debug --port=8080
+  python3 -m functions_framework --target=review_pr --debug --port=8080
 
 # Or if functions-framework is in your PATH
 source .env

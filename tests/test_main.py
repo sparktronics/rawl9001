@@ -94,7 +94,7 @@ class TestProcessPrReview:
     """Tests for process_pr_review shared function."""
 
     def test_process_review_blocking_severity(self, ado_client, sample_pr, sample_file_diffs, mocker):
-        """process_pr_review returns action-required result and posts comment + rejects PR."""
+        """process_pr_review returns action-required result and posts comment + failed status check."""
         config = {"GCS_BUCKET": "test-bucket"}
 
         # Mock Gemini to return action-required review
@@ -107,15 +107,14 @@ This change breaks existing functionality."""
         mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
-        mocker.patch.object(ado_client, "get_current_user_id", return_value="user-123")
-        mocker.patch.object(ado_client, "reject_pr")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
         assert result.max_severity == "action-required"
         assert result.has_blocking is True
         assert result.commented is True
-        assert result.action_taken == "rejected"
+        assert result.action_taken == "status:failed"
 
         # Verify comment was posted with correct header
         ado_client.post_pr_comment.assert_called_once()
@@ -124,11 +123,14 @@ This change breaks existing functionality."""
         assert "Action required before merge" in comment_text
         assert "John Doe" in comment_text  # Author name included
 
-        # Verify PR was rejected
-        ado_client.reject_pr.assert_called_once_with(12345, "user-123")
+        # Verify failed status check was posted (not a personal vote/rejection)
+        ado_client.post_pr_status.assert_called_once()
+        status_args = ado_client.post_pr_status.call_args
+        assert status_args[0][0] == 12345  # pr_id positional
+        assert status_args[1]["state"] == "failed"
 
     def test_process_review_blocking_with_just_comment_ticket(self, ado_client, sample_pr, sample_file_diffs, mocker):
-        """process_pr_review posts comment but does not reject when JUST_COMMENT_TICKET is enabled."""
+        """process_pr_review posts comment but does not post failed status when JUST_COMMENT_TICKET is enabled."""
         config = {"GCS_BUCKET": "test-bucket", "JUST_COMMENT_TICKET": True}
 
         # Mock Gemini to return action-required review
@@ -141,15 +143,14 @@ This change breaks existing functionality."""
         mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
-        mocker.patch.object(ado_client, "get_current_user_id", return_value="user-123")
-        mocker.patch.object(ado_client, "reject_pr")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
         assert result.max_severity == "action-required"
         assert result.has_blocking is True
         assert result.commented is True
-        assert result.action_taken == "commented"  # Should be commented, not rejected
+        assert result.action_taken == "commented"  # Should be commented, not status:failed
 
         # Verify comment was posted
         ado_client.post_pr_comment.assert_called_once()
@@ -157,11 +158,11 @@ This change breaks existing functionality."""
         assert "Automated Regression Review" in comment_text
         assert "Action required before merge" in comment_text
 
-        # Verify PR was NOT rejected (due to JUST_COMMENT_TICKET)
-        ado_client.reject_pr.assert_not_called()
+        # Verify failed status was NOT posted (due to JUST_COMMENT_TICKET)
+        ado_client.post_pr_status.assert_not_called()
 
     def test_process_review_warning_severity(self, ado_client, sample_pr, sample_file_diffs, mocker):
-        """process_pr_review returns review-recommended result and posts comment but does not reject."""
+        """process_pr_review returns review-recommended result, posts comment and succeeded status."""
         config = {"GCS_BUCKET": "test-bucket"}
 
         mock_review = """# PR Review
@@ -173,7 +174,7 @@ This might cause problems."""
         mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
-        mocker.patch.object(ado_client, "reject_pr")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -188,11 +189,14 @@ This might cause problems."""
         comment_text = ado_client.post_pr_comment.call_args[0][1]
         assert "Review recommended" in comment_text
 
-        # Verify PR was NOT rejected
-        ado_client.reject_pr.assert_not_called()
+        # Verify succeeded status was posted (not failed — warning does not block)
+        ado_client.post_pr_status.assert_called_once()
+        status_args = ado_client.post_pr_status.call_args
+        assert status_args[0][0] == 12345
+        assert status_args[1]["state"] == "succeeded"
 
     def test_process_review_info_severity(self, ado_client, sample_pr, sample_file_diffs, mocker):
-        """process_pr_review returns note result with no actions."""
+        """process_pr_review returns note result: no comment, but succeeded status posted."""
         config = {"GCS_BUCKET": "test-bucket"}
 
         mock_review = """# PR Review
@@ -204,7 +208,7 @@ Just a note."""
         mocker.patch("pr_review.gemini.call_gemini", return_value=mock_review)
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mocker.patch.object(ado_client, "post_pr_comment")
-        mocker.patch.object(ado_client, "reject_pr")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -216,7 +220,12 @@ Just a note."""
 
         # Verify no comment was posted
         ado_client.post_pr_comment.assert_not_called()
-        ado_client.reject_pr.assert_not_called()
+
+        # Verify succeeded status was posted so branch policy is satisfied
+        ado_client.post_pr_status.assert_called_once()
+        status_args = ado_client.post_pr_status.call_args
+        assert status_args[0][0] == 12345
+        assert status_args[1]["state"] == "succeeded"
 
     def test_process_review_extracts_pr_metadata(self, ado_client, sample_pr, sample_file_diffs, mocker):
         """process_pr_review extracts title and author from PR metadata."""
@@ -224,6 +233,7 @@ Just a note."""
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n**Severity:** info")
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://bucket/path.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -238,6 +248,7 @@ Just a note."""
         expected_review = "# Full Review Content\n\nDetailed analysis here."
         mocker.patch("pr_review.gemini.call_gemini", return_value=expected_review)
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://bucket/path.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -249,6 +260,7 @@ Just a note."""
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review")
         mock_save = mocker.patch("pr_review.storage.save_to_storage", return_value="gs://my-bucket/reviews/path.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, sample_file_diffs)
 
@@ -362,6 +374,67 @@ class TestAzureDevOpsClientMethods:
         assert result[0]["source_content"] == "new content"
         assert result[0]["target_content"] == "old content"
 
+    def test_post_pr_status_failed(self, ado_client, mocker):
+        """post_pr_status sends failed status with correct payload."""
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+
+        result = ado_client.post_pr_status(
+            12345,
+            state="failed",
+            description="Blocking regression risk detected.",
+            context_name="rawl-review/ai-review",
+            genre="rawl-review",
+            target_url="gs://bucket/reviews/pr-12345.md",
+        )
+
+        mock_post.assert_called_once_with(
+            "/git/repositories/test-repo/pullrequests/12345/statuses",
+            {
+                "state": "failed",
+                "description": "Blocking regression risk detected.",
+                "context": {"name": "rawl-review/ai-review", "genre": "rawl-review"},
+                "targetUrl": "gs://bucket/reviews/pr-12345.md",
+            },
+        )
+        assert result == {"id": 1}
+
+    def test_post_pr_status_succeeded(self, ado_client, mocker):
+        """post_pr_status sends succeeded status."""
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 2})
+
+        ado_client.post_pr_status(12345, state="succeeded", description="AI review passed.")
+
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[0][1]
+        assert payload["state"] == "succeeded"
+        assert payload["context"]["name"] == "rawl-review/ai-review"  # default
+        assert "targetUrl" not in payload  # omitted when not provided
+
+    def test_post_pr_status_omits_target_url_when_none(self, ado_client, mocker):
+        """post_pr_status excludes targetUrl key when target_url is None."""
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={})
+
+        ado_client.post_pr_status(12345, state="pending", description="Review in progress.", target_url=None)
+
+        payload = mock_post.call_args[0][1]
+        assert "targetUrl" not in payload
+
+    def test_post_pr_status_custom_context(self, ado_client, mocker):
+        """post_pr_status respects custom context_name and genre."""
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={})
+
+        ado_client.post_pr_status(
+            99,
+            state="failed",
+            description="Custom check failed.",
+            context_name="custom/check",
+            genre="custom-genre",
+        )
+
+        payload = mock_post.call_args[0][1]
+        assert payload["context"]["name"] == "custom/check"
+        assert payload["context"]["genre"] == "custom-genre"
+
 
 # =============================================================================
 # Cloud Storage Tests
@@ -462,6 +535,61 @@ class TestGetMaxSeverity:
     def test_get_max_severity_empty_review(self):
         """Returns 'note' for empty review."""
         assert get_max_severity("") == "note"
+
+    def test_get_max_severity_severity_blocking(self):
+        """Returns 'action-required' when Severity: blocking format used."""
+        review = """
+        ### Finding: Critical issue
+        **Severity:** blocking
+        **Applies to:** some/file.java
+
+        This is a blocking issue.
+        """
+        assert get_max_severity(review) == "action-required"
+
+    def test_get_max_severity_severity_warning(self):
+        """Returns 'review-recommended' when Severity: warning format used."""
+        review = """
+        ### Finding: Potential issue
+        **Severity:** warning
+        **Applies to:** some/file.java
+
+        This could cause problems.
+        """
+        assert get_max_severity(review) == "review-recommended"
+
+    def test_get_max_severity_severity_info(self):
+        """Returns 'note' when Severity: info format used (no blocking/warning)."""
+        review = """
+        ### Finding: Minor note
+        **Severity:** info
+        **Applies to:** some/file.java
+
+        Just an observation.
+        """
+        assert get_max_severity(review) == "note"
+
+    def test_get_max_severity_severity_blocking_takes_precedence(self):
+        """Returns 'action-required' when both blocking and warning Severity found."""
+        review = """
+        ### Finding: Review warning
+        **Severity:** warning
+
+        ### Finding: Critical issue
+        **Severity:** blocking
+        """
+        assert get_max_severity(review) == "action-required"
+
+    def test_get_max_severity_mixed_formats(self):
+        """Returns 'action-required' when Priority and Severity formats are mixed."""
+        review = """
+        ### Finding: Warning issue
+        **Priority:** review-recommended
+
+        ### Finding: Critical issue
+        **Severity:** blocking
+        """
+        assert get_max_severity(review) == "action-required"
 
 
 class TestBuildReviewPrompt:
@@ -1401,6 +1529,7 @@ class TestProcessPrReviewWithFiltering:
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
 
@@ -1426,6 +1555,7 @@ class TestProcessPrReviewWithFiltering:
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
 
@@ -1450,6 +1580,7 @@ class TestProcessPrReviewWithFiltering:
 
         mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** note")
         mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
 
@@ -1477,6 +1608,7 @@ class TestProcessPrReviewWithFiltering:
         mock_gemini = mocker.patch("pr_review.gemini.call_gemini", return_value="# Review\n\n**Priority:** review-recommended")
         mock_save = mocker.patch("pr_review.storage.save_to_storage", return_value="gs://test-bucket/reviews/pr-12345.md")
         mock_comment = mocker.patch.object(ado_client, "post_pr_comment")
+        mocker.patch.object(ado_client, "post_pr_status")
 
         result = process_pr_review(config, ado_client, 12345, sample_pr, file_diffs)
 

@@ -198,6 +198,43 @@ class AzureDevOpsClient:
             data
         )
 
+    def post_pr_status(
+        self,
+        pr_id: int,
+        state: str,
+        description: str,
+        context_name: str = "rawl-review/ai-review",
+        genre: str = "rawl-review",
+        target_url: str | None = None,
+    ) -> dict:
+        """Post a status check to a PR.
+
+        Replaces vote-based rejection so the block is not tied to a personal identity.
+        Tech leads with branch policy bypass permission can override a failed status.
+
+        Args:
+            pr_id: Pull request ID
+            state: One of "succeeded", "failed", "pending", "error"
+            description: Human-readable message shown in the Azure DevOps PR Checks tab
+            context_name: Unique check identifier — must match the Status policy config in Azure DevOps
+            genre: Grouping label for related checks
+            target_url: Optional link to the full review (e.g. GCS review URL)
+
+        Returns:
+            API response dict
+        """
+        data: dict = {
+            "state": state,
+            "description": description,
+            "context": {"name": context_name, "genre": genre},
+        }
+        if target_url:
+            data["targetUrl"] = target_url
+        return self._post(
+            f"/git/repositories/{self.repo}/pullrequests/{pr_id}/statuses",
+            data,
+        )
+
     def get_current_user_id(self) -> str:
         """Get the current user's ID (PAT owner) from Azure DevOps.
 
