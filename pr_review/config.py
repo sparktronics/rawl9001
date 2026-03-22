@@ -50,8 +50,8 @@ def load_config() -> tuple[dict, list]:
     config["JUST_COMMENT_TICKET"] = os.environ.get("JUST_COMMENT_TICKET", "").lower() == "true"
 
     # PR Status Check context — must match the "Status policy" configured in Azure DevOps branch policies
-    config["STATUS_CONTEXT_NAME"] = os.environ.get("STATUS_CONTEXT_NAME", "rawl-review/ai-review")
-    config["STATUS_GENRE"] = os.environ.get("STATUS_GENRE", "rawl-review")
+    config["STATUS_CONTEXT_NAME"] = os.environ.get("STATUS_CONTEXT_NAME", "ai-review")
+    config["STATUS_GENRE"] = os.environ.get("STATUS_GENRE", "rawl-reviews")
 
     return config, missing
 

@@ -70,13 +70,16 @@ def process_pr_review(
     storage_path = storage.save_to_storage(config["GCS_BUCKET"], pr_id, review)
 
     # Status check config (used to enforce blocking via Azure DevOps branch policy)
-    status_context = config.get("STATUS_CONTEXT_NAME", "rawl-review/ai-review")
-    status_genre = config.get("STATUS_GENRE", "rawl-review")
+    status_context = config.get("STATUS_CONTEXT_NAME", "ai-review")
+    status_genre = config.get("STATUS_GENRE", "rawl-reviews")
     just_comment = config.get("JUST_COMMENT_TICKET", False)
+    logger.info(f"[DEBUG-STATUS] status_context={status_context!r}, status_genre={status_genre!r}, just_comment={just_comment!r} (type={type(just_comment).__name__})")
 
     # Take action based on severity
     commented = False
     action_taken = None
+
+    logger.info(f"[DEBUG-STATUS] Decision inputs: has_blocking={has_blocking}, has_warning={has_warning}, max_severity={max_severity!r}")
 
     if has_blocking or has_warning:
         logger.info(f"[ACTION] Posting review comment to PR #{pr_id}")
@@ -110,6 +113,7 @@ def process_pr_review(
                 action_taken = "commented"
             else:
                 logger.info("[ACTION] Posting failed status check to PR due to blocking issues")
+                logger.info(f"[DEBUG-STATUS] About to post FAILED status: context_name={status_context!r}, genre={status_genre!r}, target_url={storage_path!r}")
                 response_ado_status = ado.post_pr_status(
                     pr_id,
                     state="failed",
@@ -118,12 +122,13 @@ def process_pr_review(
                     genre=status_genre,
                     target_url=storage_path,
                 )
-                logger.info(f"[ACTION] ADO response: {response_ado_status}")
+                logger.info(f"[DEBUG-STATUS] FAILED status response: {response_ado_status}")
                 action_taken = "status:failed"
                 logger.info(f"[ACTION] PR #{pr_id} status set to failed")
         else:
             # Post succeeded so branch policy is satisfied for non-blocking outcomes
-            ado.post_pr_status(
+            logger.info(f"[DEBUG-STATUS] About to post SUCCEEDED status (warning path): context_name={status_context!r}, genre={status_genre!r}")
+            warning_status_resp = ado.post_pr_status(
                 pr_id,
                 state="succeeded",
                 description="AI review passed — review recommended but not blocking.",
@@ -131,10 +136,12 @@ def process_pr_review(
                 genre=status_genre,
                 target_url=storage_path,
             )
+            logger.info(f"[DEBUG-STATUS] SUCCEEDED status response (warning path): {warning_status_resp}")
             action_taken = "commented"
     else:
         logger.info("[ACTION] No issues found — posting succeeded status")
-        ado.post_pr_status(
+        logger.info(f"[DEBUG-STATUS] About to post SUCCEEDED status (clean path): context_name={status_context!r}, genre={status_genre!r}")
+        clean_status_resp = ado.post_pr_status(
             pr_id,
             state="succeeded",
             description="AI review passed — no issues found.",
@@ -142,6 +149,7 @@ def process_pr_review(
             genre=status_genre,
             target_url=storage_path,
         )
+        logger.info(f"[DEBUG-STATUS] SUCCEEDED status response (clean path): {clean_status_resp}")
 
     logger.info(f"[REVIEW] Complete | Severity: {max_severity} | Action: {action_taken or 'none'}")
 

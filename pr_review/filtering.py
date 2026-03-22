@@ -33,7 +33,8 @@ def filter_non_code_files(file_diffs: list) -> tuple[list, int]:
     filtered_paths = []
 
     for diff in file_diffs:
-        path = diff.get("path", "")
+        # API may return path: null; .get("path", "") still yields None when key exists.
+        path = diff.get("path") or ""
         path_lower = path.lower()
 
         # Check if path ends with any filtered extension

@@ -1393,6 +1393,18 @@ class TestFilterNonCodeFiles:
         assert any(diff["path"] == "/src/markdown-parser.js" for diff in filtered)
         assert any(diff["path"] == "/src/shell-utils.js" for diff in filtered)
 
+    def test_filter_non_code_files_null_path_from_api(self):
+        """filter_non_code_files treats null/missing path like empty (no crash)."""
+        file_diffs = [
+            {"path": None, "change_type": "edit", "source_content": "x", "target_content": "y"},
+            {"path": "/src/ok.js", "change_type": "edit", "source_content": "a", "target_content": "b"},
+        ]
+
+        filtered, count = filter_non_code_files(file_diffs)
+
+        assert count == 0
+        assert len(filtered) == 2
+
 
 # =============================================================================
 # Extensive PR Detection Tests

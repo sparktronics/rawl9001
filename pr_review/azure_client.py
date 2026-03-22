@@ -135,7 +135,7 @@ class AzureDevOpsClient:
             files_processed = 0
             for change in changes:
                 item = change.get("item", {})
-                path = item.get("path", "")
+                path = item.get("path") or ""
                 change_type = change.get("changeType", "unknown")
 
                 # Skip folders
@@ -203,8 +203,8 @@ class AzureDevOpsClient:
         pr_id: int,
         state: str,
         description: str,
-        context_name: str = "rawl-review/ai-review",
-        genre: str = "rawl-review",
+        context_name: str = "ai-review",
+        genre: str = "rawl-reviews",
         target_url: str | None = None,
     ) -> dict:
         """Post a status check to a PR.
@@ -230,6 +230,7 @@ class AzureDevOpsClient:
         }
         if target_url:
             data["targetUrl"] = target_url
+        logger.info(f"[DEBUG-STATUS] post_pr_status payload: {data}")
         return self._post(
             f"/git/repositories/{self.repo}/pullrequests/{pr_id}/statuses",
             data,
