@@ -8,6 +8,7 @@
 
 variable "project_id" {
   description = "The GCP project ID to deploy resources into"
+  default     = "cog01k6msqf1e7e5z9m5grb69qmrm"
   type        = string
 }
 
@@ -24,12 +25,13 @@ variable "region" {
 variable "gcs_bucket_name" {
   description = "Name of the GCS bucket for storing PR reviews"
   type        = string
+  default     = "rawl9001bat"
 }
 
 variable "gcs_bucket_location" {
   description = "Location for the GCS bucket (defaults to region)"
   type        = string
-  default     = ""
+  default     = "us-central1"
 }
 
 # -----------------------------------------------------------------------------
@@ -39,16 +41,19 @@ variable "gcs_bucket_location" {
 variable "azure_devops_org" {
   description = "Azure DevOps organization name"
   type        = string
+  default     = "batdigital"
 }
 
 variable "azure_devops_project" {
   description = "Azure DevOps project name (URL-encoded if contains spaces)"
   type        = string
+  default     = "Consumer%20Platforms"
 }
 
 variable "azure_devops_repo" {
   description = "Azure DevOps repository name or ID"
   type        = string
+  default     = "AEM-Platform-Core"
 }
 
 # -----------------------------------------------------------------------------
@@ -58,19 +63,19 @@ variable "azure_devops_repo" {
 variable "vertex_project" {
   description = "GCP project ID for Vertex AI (defaults to project_id)"
   type        = string
-  default     = ""
+  default     = "cog01k6msqf1e7e5z9m5grb69qmrm"
 }
 
 variable "vertex_location" {
   description = "GCP region for Vertex AI"
   type        = string
-  default     = "us-central1"
+  default     = "global"
 }
 
 variable "gemini_model" {
   description = "Gemini model to use for reviews"
   type        = string
-  default     = "gemini-2.5-pro"
+  default     = "gemini-3.1-preview"
 }
 
 # -----------------------------------------------------------------------------
@@ -120,7 +125,7 @@ variable "pubsub_topic_name" {
 variable "dlq_topic_name" {
   description = "Name of the Dead Letter Queue topic"
   type        = string
-  default     = "pr-review-dlq"
+  default     = "pr-review-dlq-sub"
 }
 
 variable "dlq_max_delivery_attempts" {

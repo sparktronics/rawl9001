@@ -69,9 +69,17 @@ def process_pr_review(
     logger.info("[REVIEW] Saving to Cloud Storage")
     storage_path = storage.save_to_storage(config["GCS_BUCKET"], pr_id, review)
 
+    # Status check config (used to enforce blocking via Azure DevOps branch policy)
+    status_context = config.get("STATUS_CONTEXT_NAME", "ai-review")
+    status_genre = config.get("STATUS_GENRE", "rawl-reviews")
+    just_comment = config.get("JUST_COMMENT_TICKET", False)
+    logger.info(f"[DEBUG-STATUS] status_context={status_context!r}, status_genre={status_genre!r}, just_comment={just_comment!r} (type={type(just_comment).__name__})")
+
     # Take action based on severity
     commented = False
     action_taken = None
+
+    logger.info(f"[DEBUG-STATUS] Decision inputs: has_blocking={has_blocking}, has_warning={has_warning}, max_severity={max_severity!r}")
 
     if has_blocking or has_warning:
         logger.info(f"[ACTION] Posting review comment to PR #{pr_id}")
@@ -94,27 +102,54 @@ def process_pr_review(
 
         comment_header += f"📁 Full review saved to: `{storage_path}`\n\n---\n\n"
 
-        ado.post_pr_comment(pr_id, comment_header + review)
+        post_comment_response = ado.post_pr_comment(pr_id, comment_header + review)
+        logger.info(f"[ACTION] ADO response: {post_comment_response}")
         commented = True
         logger.info("[ACTION] Comment posted successfully")
 
         if has_blocking:
-            # Check if just_comment_ticket is enabled
-            just_comment = config.get("JUST_COMMENT_TICKET", False)
-
             if just_comment:
-                logger.info("[ACTION] Skipping PR rejection - JUST_COMMENT_TICKET is enabled")
+                logger.info("[ACTION] Skipping PR status check - JUST_COMMENT_TICKET is enabled")
                 action_taken = "commented"
             else:
-                logger.info("[ACTION] Rejecting PR due to blocking issues")
-                user_id = ado.get_current_user_id()
-                ado.reject_pr(pr_id, user_id)
-                action_taken = "rejected"
-                logger.info(f"[ACTION] PR #{pr_id} rejected")
+                logger.info("[ACTION] Posting failed status check to PR due to blocking issues")
+                logger.info(f"[DEBUG-STATUS] About to post FAILED status: context_name={status_context!r}, genre={status_genre!r}, target_url={storage_path!r}")
+                response_ado_status = ado.post_pr_status(
+                    pr_id,
+                    state="failed",
+                    description="AI review found blocking regression risk. Tech leads may override via branch policy bypass.",
+                    context_name=status_context,
+                    genre=status_genre,
+                    target_url=storage_path,
+                )
+                logger.info(f"[DEBUG-STATUS] FAILED status response: {response_ado_status}")
+                action_taken = "status:failed"
+                logger.info(f"[ACTION] PR #{pr_id} status set to failed")
         else:
+            # Post succeeded so branch policy is satisfied for non-blocking outcomes
+            logger.info(f"[DEBUG-STATUS] About to post SUCCEEDED status (warning path): context_name={status_context!r}, genre={status_genre!r}")
+            warning_status_resp = ado.post_pr_status(
+                pr_id,
+                state="succeeded",
+                description="AI review passed — review recommended but not blocking.",
+                context_name=status_context,
+                genre=status_genre,
+                target_url=storage_path,
+            )
+            logger.info(f"[DEBUG-STATUS] SUCCEEDED status response (warning path): {warning_status_resp}")
             action_taken = "commented"
     else:
-        logger.info("[ACTION] No issues found - no action taken on PR")
+        logger.info("[ACTION] No issues found — posting succeeded status")
+        logger.info(f"[DEBUG-STATUS] About to post SUCCEEDED status (clean path): context_name={status_context!r}, genre={status_genre!r}")
+        clean_status_resp = ado.post_pr_status(
+            pr_id,
+            state="succeeded",
+            description="AI review passed — no issues found.",
+            context_name=status_context,
+            genre=status_genre,
+            target_url=storage_path,
+        )
+        logger.info(f"[DEBUG-STATUS] SUCCEEDED status response (clean path): {clean_status_resp}")
 
     logger.info(f"[REVIEW] Complete | Severity: {max_severity} | Action: {action_taken or 'none'}")
 
