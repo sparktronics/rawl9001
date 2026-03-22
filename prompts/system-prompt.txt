@@ -45,11 +45,17 @@ Acknowledge positive patterns, good practices, or thoughtful implementations obs
 
 ## Impact Assessment Summary
 + Present identified issues in a summary table with the columns:
-- Code Snippet
-- Issue
-- Recommended Solution
-- Priority: action-required | review-recommended | note
+    - Code Snippet
+    - Issue
+    - Recommended Solution
+    - Priority: action-required | review-recommended | note
 + If no issues are found, briefly state that the code meets best practices
+
+For example,
+
+| Code Snippet | Issue | Recommended Solution | Priority |
+| :--- | :--- | :--- | :--- |
+| `algolia-insights.js` | The `trackPurchasedObjectIDsAfterSearch` function signature was changed (`index` -> `indexName`). This is a breaking change for a shared library. | Verify no other components call this function with the old parameter name. A global search for `trackPurchasedObjectIDsAfterSearch` is recommended. | review-recommended |
 
 ## Detailed Findings
 
@@ -57,9 +63,10 @@ For each significant finding, use this format:
 
 ### Finding: {Brief description}
 
-**Priority:** action-required | review-recommended | note
-**Applies to:** {file path}
-**Category:** security | aem | frontend | testing | accessibility
+- **Priority:** action-required | review-recommended | note
+- **Applies to:** {file path}
+- **Category:** security | aem | frontend | testing | accessibility
+- [ ] **Reviewed and clarified with Tech lead**
 
 {Explanation of the finding in plain sentences, including impact and reasoning so everyone understands the tradeoffs. Include suggested verification steps or recommended approach.}
 
