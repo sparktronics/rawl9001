@@ -109,7 +109,17 @@ def process_pr_review(
 
         if has_blocking:
             if just_comment:
-                logger.info("[ACTION] Skipping PR status check - JUST_COMMENT_TICKET is enabled")
+                logger.info("[ACTION] JUST_COMMENT_TICKET enabled — posting succeeded status so branch policy is satisfied")
+                logger.info(f"[DEBUG-STATUS] About to post SUCCEEDED status (just_comment path): context_name={status_context!r}, genre={status_genre!r}")
+                just_comment_status_resp = ado.post_pr_status(
+                    pr_id,
+                    state="succeeded",
+                    description="AI review found issues (see comment) — merge not blocked per team policy.",
+                    context_name=status_context,
+                    genre=status_genre,
+                    target_url=storage_path,
+                )
+                logger.info(f"[DEBUG-STATUS] SUCCEEDED status response (just_comment path): {just_comment_status_resp}")
                 action_taken = "commented"
             else:
                 logger.info("[ACTION] Posting failed status check to PR due to blocking issues")
