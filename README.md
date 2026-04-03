@@ -131,7 +131,7 @@ gcloud functions deploy pr-regression-review \
   --no-allow-unauthenticated \
   --memory=512MB \
   --timeout=300s \
-  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3.1-pro-preview,JUST_COMMENT_TICKET=True" \
+  --set-env-vars="GCS_BUCKET=rawl9001bat,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_LOCATION=global,VERTEX_PROJECT=cog01k6msqf1e7e5z9m5grb69qmrm,GEMINI_MODEL=gemini-3.1-pro-preview,JUST_COMMENT_TICKET=False" \
   --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
 
 # After deployment, grant invoker permission to authorized service accounts
@@ -182,6 +182,33 @@ gcloud functions add-iam-policy-binding pr-review-webhook \
   --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/run.invoker"
 ```
+
+#### Option D: DLQ Processor (Manual Reprocessing)
+
+Reprocesses failed messages from the Dead Letter Queue after fixing the root cause (e.g. an expired PAT). **Requires IAM authentication.** Only one instance runs at a time.
+
+```bash
+gcloud functions deploy process-dead-letter-queue \
+  --gen2 \
+  --runtime=python312 \
+  --region=us-central1 \
+  --source=. \
+  --entry-point=process_dead_letter_queue \
+  --trigger-http \
+  --no-allow-unauthenticated \
+  --memory=256MB \
+  --timeout=540s \
+  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1,GEMINI_MODEL=gemini-3.1-pro-preview,PUBSUB_TOPIC=pr-review-trigger,DLQ_SUBSCRIPTION=pr-review-dlq-sub" \
+  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest,API_KEY=pr-review-api-key:latest"
+
+# After deployment, grant invoker permission
+gcloud functions add-iam-policy-binding process-dead-letter-queue \
+  --region=us-central1 \
+  --member="serviceAccount:pr-review-caller@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
+> **Note:** This function is only needed if you have a DLQ set up and messages to reprocess. See the [DLQ Management section](#dead-letter-queue-dlq-management) for usage.
 
 ### Step 6b: API Gateway (Optional)
 
@@ -324,6 +351,14 @@ gcloud functions deploy pr-review-webhook \
   --region=us-central1 \
   --source=. \
   --entry-point=receive_webhook
+
+# DLQ processor
+gcloud functions deploy process-dead-letter-queue \
+  --gen2 \
+  --runtime=python312 \
+  --region=us-central1 \
+  --source=. \
+  --entry-point=process_dead_letter_queue
 ```
 
 > **Note:** Environment variables and secrets persist between deployments unless explicitly changed. The deployment script reuses all existing configuration automatically.
@@ -632,6 +667,8 @@ After fixing issues that caused messages to be sent to the DLQ (e.g., renewing a
 
 #### Deploy the DLQ Processing Function
 
+See [Step 6 → Option D](#option-d-dlq-processor-manual-reprocessing) for the full deploy command. Quick reference:
+
 ```bash
 gcloud functions deploy process-dead-letter-queue \
   --gen2 \
@@ -640,12 +677,11 @@ gcloud functions deploy process-dead-letter-queue \
   --source=. \
   --entry-point=process_dead_letter_queue \
   --trigger-http \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --memory=256MB \
   --timeout=540s \
-  --no-allow-unauthenticated \
-  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1,PUBSUB_TOPIC=pr-review-trigger,DLQ_SUBSCRIPTION=pr-review-dlq-sub" \
-  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest"
+  --set-env-vars="GCS_BUCKET=rawl9001,AZURE_DEVOPS_ORG=batdigital,AZURE_DEVOPS_PROJECT=Consumer%20Platforms,AZURE_DEVOPS_REPO=AEM-Platform-Core,VERTEX_PROJECT=rawl-extractor,VERTEX_LOCATION=us-central1,GEMINI_MODEL=gemini-3.1-pro-preview,PUBSUB_TOPIC=pr-review-trigger,DLQ_SUBSCRIPTION=pr-review-dlq-sub" \
+  --set-secrets="AZURE_DEVOPS_PAT=azure-devops-pat:latest,API_KEY=pr-review-api-key:latest"
 
 # Grant invoker permission
 gcloud functions add-iam-policy-binding process-dead-letter-queue \
