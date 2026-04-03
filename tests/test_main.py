@@ -1644,7 +1644,7 @@ import requests
 from pr_review.severity import parse_findings_json, INLINE_COMMENT_SEVERITIES
 from pr_review.azure_client import COMMENT_TYPE_TEXT, THREAD_STATUS_ACTIVE, LINE_OFFSET_DEFAULT
 from pr_review.prompt import FINDINGS_JSON_DELIMITER
-from pr_review.review import _post_inline_comments
+from pr_review.review import _existing_inline_locations, _post_inline_comments
 
 
 def _make_review_with_findings(findings: list) -> str:
@@ -1852,3 +1852,79 @@ class TestPostInlineComments:
         assert _VALID_FINDING["title"] in content
         assert _VALID_FINDING["priority"] in content
         assert _VALID_FINDING["inline_comment"] in content
+
+    def test_skips_duplicate_location(self, ado_client, mocker):
+        """Inline comment is not re-posted when the same location already has a thread."""
+        existing_thread = {
+            "threadContext": {
+                "filePath": _VALID_FINDING["file_path"],
+                "rightFileStart": {"line": _VALID_FINDING["line_number"], "offset": 1},
+                "rightFileEnd": {"line": _VALID_FINDING["line_number"], "offset": 1},
+            }
+        }
+        mocker.patch.object(ado_client, "get_pr_threads", return_value=[existing_thread])
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment")
+        _post_inline_comments(ado_client, 123, [_VALID_FINDING])
+        mock_inline.assert_not_called()
+
+    def test_posts_when_no_duplicate(self, ado_client, mocker):
+        """Inline comment is posted when no matching thread exists yet."""
+        mocker.patch.object(ado_client, "get_pr_threads", return_value=[])
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment", return_value={"id": 1})
+        _post_inline_comments(ado_client, 123, [_VALID_FINDING])
+        mock_inline.assert_called_once()
+
+    def test_get_threads_failure_does_not_block_posting(self, ado_client, mocker):
+        """If get_pr_threads raises, posting continues without deduplication."""
+        mocker.patch.object(ado_client, "get_pr_threads", side_effect=Exception("network error"))
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment", return_value={"id": 1})
+        _post_inline_comments(ado_client, 123, [_VALID_FINDING])
+        mock_inline.assert_called_once()
+
+
+class TestExistingInlineLocations:
+    """Tests for the _existing_inline_locations helper."""
+
+    def test_filters_top_level_comments(self):
+        """Threads without threadContext (top-level PR comments) are ignored."""
+        threads = [{"comments": [{"content": "General comment"}]}]
+        assert _existing_inline_locations(threads) == set()
+
+    def test_captures_right_side_location(self):
+        thread = {
+            "threadContext": {
+                "filePath": "/a/b.htl",
+                "rightFileStart": {"line": 10, "offset": 1},
+                "rightFileEnd": {"line": 10, "offset": 1},
+            }
+        }
+        result = _existing_inline_locations([thread])
+        assert ("/a/b.htl", 10, "right") in result
+
+    def test_captures_left_side_location(self):
+        thread = {
+            "threadContext": {
+                "filePath": "/a/b.htl",
+                "leftFileStart": {"line": 5, "offset": 1},
+                "leftFileEnd": {"line": 5, "offset": 1},
+            }
+        }
+        result = _existing_inline_locations([thread])
+        assert ("/a/b.htl", 5, "left") in result
+
+    def test_handles_both_sides_in_same_thread(self):
+        thread = {
+            "threadContext": {
+                "filePath": "/f.css",
+                "rightFileStart": {"line": 3, "offset": 1},
+                "rightFileEnd": {"line": 3, "offset": 1},
+                "leftFileStart": {"line": 2, "offset": 1},
+                "leftFileEnd": {"line": 2, "offset": 1},
+            }
+        }
+        result = _existing_inline_locations([thread])
+        assert ("/f.css", 3, "right") in result
+        assert ("/f.css", 2, "left") in result
+
+    def test_returns_empty_for_no_threads(self):
+        assert _existing_inline_locations([]) == set()
