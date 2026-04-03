@@ -62,7 +62,7 @@ def call_gemini(config: dict, prompt: str, debug: bool = False, pr_id: int = Non
                 contents=prompt,
                 config={
                     "system_instruction": system_prompt,
-                    "max_output_tokens": 8192,
+                    "max_output_tokens": 40036,  # Allow for very long responses due to java code
                     "temperature": 0.2,  # Lower for more focused analysis
                 },
             )

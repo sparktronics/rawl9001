@@ -1632,3 +1632,223 @@ class TestProcessPrReviewWithFiltering:
         comment_text = mock_comment.call_args[0][1]
         assert "Partial Review" in comment_text
         assert "excluded 2 additional files" in comment_text
+
+
+# =============================================================================
+# Inline Comments Tests
+# =============================================================================
+
+import json as _json
+import requests
+
+from pr_review.severity import parse_findings_json, INLINE_COMMENT_SEVERITIES
+from pr_review.azure_client import COMMENT_TYPE_TEXT, THREAD_STATUS_ACTIVE, LINE_OFFSET_DEFAULT
+from pr_review.prompt import FINDINGS_JSON_DELIMITER
+from pr_review.review import _post_inline_comments
+
+
+def _make_review_with_findings(findings: list) -> str:
+    """Build a fake Gemini response containing a JSON findings block."""
+    markdown = "# PR Review\n\n**Priority:** action-required\n\nSome finding.\n"
+    json_block = _json.dumps({"findings": findings})
+    return f"{markdown}\n{FINDINGS_JSON_DELIMITER}\n{json_block}"
+
+
+_VALID_FINDING = {
+    "title": "Missing default value",
+    "priority": "action-required",
+    "file_path": "/components/button/button.htl",
+    "line_number": 42,
+    "side": "right",
+    "inline_comment": "This attribute lacks a default value.",
+}
+
+
+class TestParseFindings:
+    """Tests for parse_findings_json."""
+
+    def test_returns_empty_when_no_delimiter(self):
+        assert parse_findings_json("# Review\n\nNo JSON here.") == []
+
+    def test_returns_empty_when_delimiter_present_but_no_json(self):
+        review = f"# Review\n\n{FINDINGS_JSON_DELIMITER}\n   "
+        assert parse_findings_json(review) == []
+
+    def test_returns_empty_when_json_malformed(self):
+        review = f"# Review\n\n{FINDINGS_JSON_DELIMITER}\n{{not valid json"
+        assert parse_findings_json(review) == []
+
+    def test_returns_empty_when_findings_key_missing(self):
+        review = f"# Review\n\n{FINDINGS_JSON_DELIMITER}\n{{}}"
+        assert parse_findings_json(review) == []
+
+    def test_skips_note_priority(self):
+        finding = {**_VALID_FINDING, "priority": "note"}
+        review = _make_review_with_findings([finding])
+        assert parse_findings_json(review) == []
+
+    def test_skips_finding_with_missing_required_fields(self):
+        finding = {"title": "Incomplete", "priority": "action-required"}
+        review = _make_review_with_findings([finding])
+        assert parse_findings_json(review) == []
+
+    def test_skips_finding_with_invalid_line_number_zero(self):
+        finding = {**_VALID_FINDING, "line_number": 0}
+        review = _make_review_with_findings([finding])
+        assert parse_findings_json(review) == []
+
+    def test_skips_finding_with_non_integer_line_number(self):
+        finding = {**_VALID_FINDING, "line_number": "42"}
+        review = _make_review_with_findings([finding])
+        assert parse_findings_json(review) == []
+
+    def test_skips_finding_with_invalid_side(self):
+        finding = {**_VALID_FINDING, "side": "center"}
+        review = _make_review_with_findings([finding])
+        assert parse_findings_json(review) == []
+
+    def test_returns_valid_action_required_finding(self):
+        review = _make_review_with_findings([_VALID_FINDING])
+        result = parse_findings_json(review)
+        assert len(result) == 1
+        assert result[0]["priority"] == "action-required"
+        assert result[0]["file_path"] == "/components/button/button.htl"
+        assert result[0]["line_number"] == 42
+        assert result[0]["side"] == "right"
+
+    def test_returns_valid_review_recommended_finding(self):
+        finding = {**_VALID_FINDING, "priority": "review-recommended"}
+        review = _make_review_with_findings([finding])
+        result = parse_findings_json(review)
+        assert len(result) == 1
+        assert result[0]["priority"] == "review-recommended"
+
+    def test_returns_only_valid_from_mixed_list(self):
+        bad = {"title": "Bad", "priority": "action-required"}  # missing fields
+        good = _VALID_FINDING
+        note = {**_VALID_FINDING, "priority": "note"}
+        review = _make_review_with_findings([bad, good, note])
+        result = parse_findings_json(review)
+        assert len(result) == 1
+        assert result[0]["title"] == _VALID_FINDING["title"]
+
+    def test_inline_comment_severities_constant(self):
+        assert "action-required" in INLINE_COMMENT_SEVERITIES
+        assert "review-recommended" in INLINE_COMMENT_SEVERITIES
+        assert "note" not in INLINE_COMMENT_SEVERITIES
+
+    def test_empty_findings_array(self):
+        review = _make_review_with_findings([])
+        assert parse_findings_json(review) == []
+
+    def test_left_side_is_valid(self):
+        finding = {**_VALID_FINDING, "side": "left"}
+        review = _make_review_with_findings([finding])
+        result = parse_findings_json(review)
+        assert len(result) == 1
+        assert result[0]["side"] == "left"
+
+
+class TestPostInlineComment:
+    """Tests for AzureDevOpsClient.post_inline_comment."""
+
+    def test_right_side_uses_right_context_keys(self, ado_client, mocker):
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+        ado_client.post_inline_comment(
+            pr_id=123,
+            content="Test comment",
+            file_path="/components/button.htl",
+            line_number=10,
+            side="right",
+        )
+        payload = mock_post.call_args[0][1]
+        thread_ctx = payload["threadContext"]
+        assert "rightFileStart" in thread_ctx
+        assert "rightFileEnd" in thread_ctx
+        assert "leftFileStart" not in thread_ctx
+        assert thread_ctx["rightFileStart"]["line"] == 10
+        assert thread_ctx["rightFileStart"]["offset"] == LINE_OFFSET_DEFAULT
+
+    def test_left_side_uses_left_context_keys(self, ado_client, mocker):
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+        ado_client.post_inline_comment(
+            pr_id=123,
+            content="Test comment",
+            file_path="/components/button.htl",
+            line_number=5,
+            side="left",
+        )
+        payload = mock_post.call_args[0][1]
+        thread_ctx = payload["threadContext"]
+        assert "leftFileStart" in thread_ctx
+        assert "leftFileEnd" in thread_ctx
+        assert "rightFileStart" not in thread_ctx
+
+    def test_payload_uses_named_constants(self, ado_client, mocker):
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+        ado_client.post_inline_comment(
+            pr_id=123,
+            content="Test",
+            file_path="/file.htl",
+            line_number=1,
+        )
+        payload = mock_post.call_args[0][1]
+        assert payload["comments"][0]["commentType"] == COMMENT_TYPE_TEXT
+        assert payload["status"] == THREAD_STATUS_ACTIVE
+
+    def test_file_path_in_thread_context(self, ado_client, mocker):
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+        ado_client.post_inline_comment(
+            pr_id=99,
+            content="x",
+            file_path="/my/file.js",
+            line_number=7,
+        )
+        payload = mock_post.call_args[0][1]
+        assert payload["threadContext"]["filePath"] == "/my/file.js"
+
+    def test_posts_to_correct_endpoint(self, ado_client, mocker):
+        mock_post = mocker.patch.object(ado_client, "_post", return_value={"id": 1})
+        ado_client.post_inline_comment(pr_id=55, content="x", file_path="/f.htl", line_number=1)
+        endpoint = mock_post.call_args[0][0]
+        assert "/pullrequests/55/threads" in endpoint
+
+
+class TestPostInlineComments:
+    """Tests for the _post_inline_comments helper in review.py."""
+
+    def test_skips_empty_findings(self, ado_client, mocker):
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment")
+        _post_inline_comments(ado_client, 123, [])
+        mock_inline.assert_not_called()
+
+    def test_posts_all_valid_findings(self, ado_client, mocker):
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment", return_value={"id": 1})
+        findings = [
+            {**_VALID_FINDING},
+            {**_VALID_FINDING, "file_path": "/other/file.css", "line_number": 10},
+        ]
+        _post_inline_comments(ado_client, 123, findings)
+        assert mock_inline.call_count == 2
+
+    def test_continues_after_http_error(self, ado_client, mocker):
+        error_response = mocker.MagicMock()
+        error_response.status_code = 400
+        http_error = requests.HTTPError(response=error_response)
+        mock_inline = mocker.patch.object(
+            ado_client, "post_inline_comment", side_effect=[http_error, {"id": 2}]
+        )
+        findings = [
+            {**_VALID_FINDING, "file_path": "/bad.htl"},
+            {**_VALID_FINDING, "file_path": "/good.htl"},
+        ]
+        _post_inline_comments(ado_client, 123, findings)
+        assert mock_inline.call_count == 2
+
+    def test_comment_body_includes_title_and_priority(self, ado_client, mocker):
+        mock_inline = mocker.patch.object(ado_client, "post_inline_comment", return_value={"id": 1})
+        _post_inline_comments(ado_client, 123, [_VALID_FINDING])
+        content = mock_inline.call_args[1]["content"]
+        assert _VALID_FINDING["title"] in content
+        assert _VALID_FINDING["priority"] in content
+        assert _VALID_FINDING["inline_comment"] in content
