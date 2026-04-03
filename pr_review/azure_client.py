@@ -10,6 +10,11 @@ from pr_review.utils import timed_operation
 logger = logging.getLogger("pr_review")
 
 
+COMMENT_TYPE_TEXT = 1       # Azure DevOps commentType value for plain text
+THREAD_STATUS_ACTIVE = 1    # Azure DevOps thread status value for active
+LINE_OFFSET_DEFAULT = 1     # Azure DevOps line offset — always 1 for single-line annotations
+
+
 class AzureDevOpsClient:
     """Simple client for Azure DevOps REST API."""
 
@@ -174,10 +179,58 @@ class AzureDevOpsClient:
                 {
                     "parentCommentId": 0,
                     "content": content,
-                    "commentType": 1,  # Text comment
+                    "commentType": COMMENT_TYPE_TEXT,
                 }
             ],
-            "status": 1,  # Active
+            "status": THREAD_STATUS_ACTIVE,
+        }
+        return self._post(f"/git/repositories/{self.repo}/pullrequests/{pr_id}/threads", data)
+
+    def post_inline_comment(
+        self,
+        pr_id: int,
+        content: str,
+        file_path: str,
+        line_number: int,
+        side: str = "right",
+    ) -> dict:
+        """Post an inline comment thread on a specific file line in a PR.
+
+        Args:
+            pr_id: Pull request ID
+            content: Markdown content for the inline comment
+            file_path: Repository-relative file path (e.g. /components/button/button.htl)
+            line_number: 1-based line number in the file
+            side: "right" for the new file (source branch), "left" for the old file (target branch)
+
+        Returns:
+            API response dict
+
+        Raises:
+            requests.HTTPError: On non-2xx response from Azure DevOps
+        """
+        if side == "right":
+            start_key = "rightFileStart"
+            end_key = "rightFileEnd"
+        else:
+            start_key = "leftFileStart"
+            end_key = "leftFileEnd"
+
+        line_position = {"line": line_number, "offset": LINE_OFFSET_DEFAULT}
+        data = {
+            "comments": [
+                {
+                    "parentCommentId": 0,
+                    "content": content,
+                    "commentType": COMMENT_TYPE_TEXT,
+                }
+            ],
+            "threadContext": {
+                "filePath": file_path,
+                start_key: line_position,
+                end_key: line_position,
+            },
+            "status": THREAD_STATUS_ACTIVE,
         }
         return self._post(f"/git/repositories/{self.repo}/pullrequests/{pr_id}/threads", data)
 

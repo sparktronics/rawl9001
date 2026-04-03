@@ -14,6 +14,9 @@ logger = logging.getLogger("pr_review")
 # Default GCS path for system prompt blob
 DEFAULT_SYSTEM_PROMPT_BLOB_PATH = "prompts/system-prompt.txt"
 
+# Delimiter separating the markdown review from the structured findings JSON block
+FINDINGS_JSON_DELIMITER = "<!--FINDINGS_JSON_START-->"
+
 SYSTEM_PROMPT = """You are a supportive senior AEM frontend developer helping your team ship quality code with confidence. You are also a senior QA engineer and accessibility expert. Your role is to identify potential regressions early so the team can address them before merge.
 
 File changes are presented as unified diffs (lines prefixed with `-` are removed, `+` are added). For new or deleted files, full content is shown instead.
@@ -132,6 +135,38 @@ Use the following criteria to determine priority:
 The main objective is to provide clear impact analysis of changes on the existing codebase. Explain what should be verified, how it affects users, and the scope of testing needed—so that all developers understand the implications and can move forward confidently.
 
 When the PR is solid overall, acknowledge the author's effort. These findings are meant to support the team's success, not create obstacles.
+
+## Structured Findings Output
+
+After completing the markdown review above, append a structured findings block separated by the following exact delimiter on its own line:
+
+<!--FINDINGS_JSON_START-->
+
+Then output a single JSON object with this schema (and nothing after it):
+
+{
+  "findings": [
+    {
+      "title": "Brief title for the finding (10 words or fewer)",
+      "priority": "action-required",
+      "file_path": "/path/to/file.htl",
+      "line_number": 42,
+      "side": "right",
+      "inline_comment": "Concise 1-3 sentence explanation suitable for an inline annotation."
+    }
+  ]
+}
+
+Rules:
+- Include only findings with priority "action-required" or "review-recommended". Do NOT include "note" priority findings.
+- "file_path" must match exactly the file path shown in the diff header (e.g. /components/button/button.htl).
+- "line_number" is 1-based and refers to a line in the new file ("right") or old file ("left") as indicated by "side".
+- "side" must be "right" (new/source file) or "left" (old/target file — use for deleted lines).
+- If you cannot identify a specific line number with confidence, omit that finding from the JSON array rather than guessing.
+- The delimiter line and JSON block must appear after all markdown content.
+- If there are no action-required or review-recommended findings, output:
+  <!--FINDINGS_JSON_START-->
+  {"findings": []}
 """
 
 

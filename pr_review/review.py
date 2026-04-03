@@ -5,9 +5,50 @@ import logging
 from pr_review import filtering, gemini, storage
 from pr_review.models import ReviewResult
 from pr_review.prompt import build_review_prompt
-from pr_review.severity import get_max_severity
+from pr_review.severity import get_max_severity, parse_findings_json
 
 logger = logging.getLogger("pr_review")
+
+
+def _post_inline_comments(
+    ado: "pr_review.azure_client.AzureDevOpsClient",
+    pr_id: int,
+    findings: list[dict],
+) -> None:
+    """Post inline comment threads for each finding. Failures are non-fatal.
+
+    Args:
+        ado: Initialized AzureDevOpsClient instance
+        pr_id: Pull request ID
+        findings: Validated finding dicts from parse_findings_json()
+    """
+    if not findings:
+        return
+
+    logger.info(f"[INLINE] Posting {len(findings)} inline comments to PR #{pr_id}")
+    posted = 0
+    skipped = 0
+
+    for finding in findings:
+        try:
+            body = f"**{finding['title']}** (`{finding['priority']}`)\n\n{finding['inline_comment']}"
+            ado.post_inline_comment(
+                pr_id=pr_id,
+                content=body,
+                file_path=finding["file_path"],
+                line_number=finding["line_number"],
+                side=finding["side"],
+            )
+            posted += 1
+            logger.debug(f"[INLINE] Posted on {finding['file_path']}:{finding['line_number']}")
+        except Exception as exc:
+            skipped += 1
+            logger.warning(
+                f"[INLINE] Failed to post on {finding['file_path']}:{finding['line_number']} "
+                f"— {type(exc).__name__}: {exc}"
+            )
+
+    logger.info(f"[INLINE] Done: {posted} posted, {skipped} skipped")
 
 
 def process_pr_review(
@@ -58,12 +99,14 @@ def process_pr_review(
 
     review = gemini.call_gemini(config, prompt, debug=debug, pr_id=pr_id)
 
-    # Determine severity
+    # Determine severity and parse structured findings for inline comments
     logger.info("[REVIEW] Analyzing severity")
     max_severity = get_max_severity(review)
     has_blocking = max_severity == "action-required"
     has_warning = max_severity == "review-recommended"
     logger.info(f"[REVIEW] Priority: {max_severity} | action_required={has_blocking} | review_recommended={has_warning}")
+    findings = parse_findings_json(review)
+    logger.info(f"[REVIEW] Parsed {len(findings)} inline-eligible findings")
 
     # Save to Cloud Storage
     logger.info("[REVIEW] Saving to Cloud Storage")
@@ -106,6 +149,8 @@ def process_pr_review(
         logger.info(f"[ACTION] ADO response: {post_comment_response}")
         commented = True
         logger.info("[ACTION] Comment posted successfully")
+
+        _post_inline_comments(ado, pr_id, findings)
 
         if has_blocking:
             if just_comment:

@@ -70,4 +70,36 @@ For each significant finding, use this format:
 
 {Explanation of the finding in plain sentences, including impact and reasoning so everyone understands the tradeoffs. Include suggested verification steps or recommended approach.}
 
+## Structured Findings Output
+
+After completing the markdown review above, append a structured findings block separated by the following exact delimiter on its own line:
+
+<!--FINDINGS_JSON_START-->
+
+Then output a single JSON object with this schema (and nothing after it):
+
+{
+  "findings": [
+    {
+      "title": "Brief title for the finding (10 words or fewer)",
+      "priority": "action-required",
+      "file_path": "/path/to/file.htl",
+      "line_number": 42,
+      "side": "right",
+      "inline_comment": "Concise 1-3 sentence explanation suitable for an inline annotation."
+    }
+  ]
+}
+
+Rules:
+- Include only findings with priority "action-required" or "review-recommended". Do NOT include "note" priority findings.
+- "file_path" must match exactly the file path shown in the diff header (e.g. /components/button/button.htl).
+- "line_number" is 1-based and refers to a line in the new file ("right") or old file ("left") as indicated by "side".
+- "side" must be "right" (new/source file) or "left" (old/target file -- use for deleted lines).
+- If you cannot identify a specific line number with confidence, omit that finding from the JSON array rather than guessing.
+- The delimiter line and JSON block must appear after all markdown content.
+- If there are no action-required or review-recommended findings, output:
+  <!--FINDINGS_JSON_START-->
+  {"findings": []}
+
 
