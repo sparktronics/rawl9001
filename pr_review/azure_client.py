@@ -234,6 +234,15 @@ class AzureDevOpsClient:
         }
         return self._post(f"/git/repositories/{self.repo}/pullrequests/{pr_id}/threads", data)
 
+    def get_pr_threads(self, pr_id: int) -> list[dict]:
+        """Fetch all comment threads for a PR.
+
+        Returns:
+            List of thread dicts from the Azure DevOps API.
+        """
+        result = self._get(f"/git/repositories/{self.repo}/pullrequests/{pr_id}/threads")
+        return result.get("value", [])
+
     def reject_pr(self, pr_id: int, reviewer_id: str) -> dict:
         """Reject a PR by voting -10 (reject).
 

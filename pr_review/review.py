@@ -10,12 +10,33 @@ from pr_review.severity import get_max_severity, parse_findings_json
 logger = logging.getLogger("pr_review")
 
 
+def _existing_inline_locations(threads: list[dict]) -> set[tuple]:
+    """Return a set of (file_path, line_number, side) tuples already posted as inline threads.
+
+    Top-level PR comments (no threadContext) are ignored.
+    """
+    locations = set()
+    for thread in threads:
+        ctx = thread.get("threadContext")
+        if not ctx:
+            continue
+        file_path = ctx.get("filePath", "")
+        if ctx.get("rightFileStart"):
+            locations.add((file_path, ctx["rightFileStart"]["line"], "right"))
+        if ctx.get("leftFileStart"):
+            locations.add((file_path, ctx["leftFileStart"]["line"], "left"))
+    return locations
+
+
 def _post_inline_comments(
     ado: "pr_review.azure_client.AzureDevOpsClient",
     pr_id: int,
     findings: list[dict],
 ) -> None:
     """Post inline comment threads for each finding. Failures are non-fatal.
+
+    Fetches existing threads first to skip any locations already commented on,
+    preventing duplicate inline comments when a PR review is triggered more than once.
 
     Args:
         ado: Initialized AzureDevOpsClient instance
@@ -25,11 +46,26 @@ def _post_inline_comments(
     if not findings:
         return
 
+    existing: set[tuple] = set()
+    try:
+        threads = ado.get_pr_threads(pr_id)
+        existing = _existing_inline_locations(threads)
+        if existing:
+            logger.debug(f"[INLINE] Found {len(existing)} existing inline thread location(s) on PR #{pr_id}")
+    except Exception as exc:
+        logger.warning(f"[INLINE] Could not fetch existing threads, deduplication skipped — {type(exc).__name__}: {exc}")
+
     logger.info(f"[INLINE] Posting {len(findings)} inline comments to PR #{pr_id}")
     posted = 0
-    skipped = 0
+    duplicates = 0
+    failed = 0
 
     for finding in findings:
+        location = (finding["file_path"], finding["line_number"], finding["side"])
+        if location in existing:
+            duplicates += 1
+            logger.debug(f"[INLINE] Skipping duplicate on {finding['file_path']}:{finding['line_number']}")
+            continue
         try:
             body = f"**{finding['title']}** (`{finding['priority']}`)\n\n{finding['inline_comment']}"
             ado.post_inline_comment(
@@ -42,13 +78,13 @@ def _post_inline_comments(
             posted += 1
             logger.debug(f"[INLINE] Posted on {finding['file_path']}:{finding['line_number']}")
         except Exception as exc:
-            skipped += 1
+            failed += 1
             logger.warning(
                 f"[INLINE] Failed to post on {finding['file_path']}:{finding['line_number']} "
                 f"— {type(exc).__name__}: {exc}"
             )
 
-    logger.info(f"[INLINE] Done: {posted} posted, {skipped} skipped")
+    logger.info(f"[INLINE] Done: {posted} posted, {duplicates} skipped (duplicates), {failed} failed")
 
 
 def process_pr_review(
